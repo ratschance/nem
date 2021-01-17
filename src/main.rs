@@ -1,11 +1,11 @@
-mod bus;
+mod nes;
 mod cpu;
 mod memory;
 
-use bus::Bus;
+use nes::Nes;
 
 fn main() {
-    let mut bus = Bus::init();
-    bus.tick();
-    let mut c6502 = cpu::c6502::C6502::init();
+    let args: Vec<String> = std::env::args().collect();
+    let mut nes = Nes::new(&args[1]);
+    nes.tick();
 }
