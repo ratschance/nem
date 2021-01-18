@@ -45,55 +45,55 @@ impl C6502 {
 
     // Addressing Modes
 
-    fn acc(&self) -> bool {
+    fn acc(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn imm(&self) -> bool {
+    fn imm(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn abs(&self) -> bool {
+    fn abs(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn zp0(&self) -> bool {
+    fn zp0(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn zpx(&self) -> bool {
+    fn zpx(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn zpy(&self) -> bool {
+    fn zpy(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn abx(&self) -> bool {
+    fn abx(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn aby(&self) -> bool {
+    fn aby(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn imp(&self) -> bool {
+    fn imp(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn rel(&self) -> bool {
+    fn rel(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn ind(&self) -> bool {
+    fn ind(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn izx(&self) -> bool {
+    fn izx(&mut self) -> bool {
         unimplemented!()
     }
 
-    fn izy(&self) -> bool {
+    fn izy(&mut self) -> bool {
         unimplemented!()
     }
 
