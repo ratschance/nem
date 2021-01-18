@@ -3,9 +3,9 @@ extern crate bitflags;
 #[macro_use]
 extern crate lazy_static;
 
-mod nes;
 mod cpu;
 mod memory;
+mod nes;
 
 use nes::Nes;
 

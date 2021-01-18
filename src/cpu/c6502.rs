@@ -45,7 +45,7 @@ impl C6502 {
             status: Status::empty(),
             x: 0,
             y: 0,
-            mmap: mmap,
+            mmap,
         }
     }
 
@@ -59,10 +59,6 @@ impl C6502 {
     }
 
     // Addressing Modes
-
-    fn acc(&mut self) -> bool {
-        unimplemented!()
-    }
 
     fn imm(&mut self) -> bool {
         unimplemented!()
@@ -94,7 +90,7 @@ impl C6502 {
 
     fn imp(&mut self) -> bool {
         // Nothing needs to be done
-        return false;
+        false
     }
 
     fn rel(&mut self) -> bool {
@@ -113,10 +109,16 @@ impl C6502 {
         unimplemented!()
     }
 
+    #[rustfmt::skip]
     fn init_instruction_table() -> [Instruction; 256] {
         macro_rules! op {
             ($w:literal, $x:ident, $y:ident, $z:literal) => {
-                Instruction { name: $w.to_string(), instr_fn: C6502::$x, addr_fn: C6502::$y, cycles: $z }
+                Instruction {
+                    name: $w.to_string(),
+                    instr_fn: C6502::$x,
+                    addr_fn: C6502::$y,
+                    cycles: $z
+                }
             };
         }
         [
@@ -136,10 +138,10 @@ impl C6502 {
             op!("BNE", bne, rel, 2), op!("CMP", cmp, izy, 5), op!("???", xxx, imp, 2), op!("???", xxx, imp, 8), op!("???", xxx, imp, 4), op!("CMP", cmp, zpx, 4), op!("DEC", dec, zpx, 6), op!("???", xxx, imp, 6), op!("CLD", cld, imp, 2), op!("CMP", cmp, aby, 4), op!("???", xxx, imp, 2), op!("???", xxx, imp, 7), op!("???", xxx, imp, 4), op!("CMP", cmp, abx, 4), op!("DEC", dec, abx, 7), op!("???", xxx, imp, 7),
             op!("CPX", cpx, imm, 2), op!("SBC", sbc, izx, 6), op!("???", xxx, imp, 2), op!("???", xxx, imp, 8), op!("CPX", cpx, zp0, 3), op!("SBC", sbc, zp0, 3), op!("INC", inc, zp0, 5), op!("???", xxx, imp, 5), op!("INX", inx, imp, 2), op!("SBC", sbc, imm, 2), op!("NOP", nop, imp, 2), op!("???", xxx, imp, 2), op!("CPX", cpx, abs, 4), op!("SBC", sbc, abs, 4), op!("INC", inc, abs, 6), op!("???", xxx, imp, 6),
             op!("BEQ", beq, rel, 2), op!("SBC", sbc, izy, 5), op!("???", xxx, imp, 2), op!("???", xxx, imp, 8), op!("???", xxx, imp, 4), op!("SBC", sbc, zpx, 4), op!("INC", inc, zpx, 6), op!("???", xxx, imp, 6), op!("SED", sed, imp, 2), op!("SBC", sbc, aby, 4), op!("???", xxx, imp, 2), op!("???", xxx, imp, 7), op!("???", xxx, imp, 4), op!("SBC", sbc, abx, 4), op!("INC", inc, abx, 7), op!("???", xxx, imp, 7),
-        ] 
+        ]
     }
 
-    // Instructions 
+    // Instructions
     fn adc(&mut self) -> bool {
         unimplemented!()
     }
@@ -198,7 +200,7 @@ impl C6502 {
 
     fn cld(&mut self) -> bool {
         self.status.set(Status::DECIMAL, false);
-        return false;
+        false
     }
 
     fn cli(&mut self) -> bool {

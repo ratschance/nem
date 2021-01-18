@@ -1,20 +1,19 @@
-
 pub trait Memory {
     /// Read one byte at the specified address
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `addr` - Address to read
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// * `val` - Byte read at the requested address
     fn read(&self, addr: u16) -> u8;
 
     /// Write one byte at the speciifed address
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `addr` - Address to write to
     /// * `val` - Value to write
     fn write(&mut self, addr: u16, val: u8);
@@ -66,7 +65,7 @@ impl Memory for Rom {
 
 pub struct Mirrored {
     virtual_size: usize,
-    mem: Box<dyn Memory>
+    mem: Box<dyn Memory>,
 }
 
 impl Mirrored {
@@ -101,7 +100,7 @@ impl MemoryMap {
     pub fn read(&self, addr: u16) -> u8 {
         for (start, end, mem) in &self.items {
             if addr >= *start && addr <= *end {
-                return mem.read(addr - start)
+                return mem.read(addr - start);
             }
         }
         panic!("Attempted to read address outside of mmap: {}", addr)
@@ -111,7 +110,7 @@ impl MemoryMap {
         for (start, end, mem) in &mut self.items {
             if addr >= *start && addr <= *end {
                 mem.write(addr - *start, val);
-                return
+                return;
             }
         }
         panic!("Attempted to write to address outside of mmap: {}", addr)
