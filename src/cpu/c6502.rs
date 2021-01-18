@@ -4,11 +4,24 @@ lazy_static! {
     static ref INSTRUCTIONS: [Instruction; 256] = C6502::init_instruction_table();
 }
 
+bitflags! {
+    struct Status: u8 {
+        const CARRY    = 0b0000_0001;
+        const ZERO     = 0b0000_0010;
+        const IDISABLE = 0b0000_0100;
+        const DECIMAL  = 0b0000_1000;
+        const BLO      = 0b0001_0000;
+        const BHI      = 0b0010_0000;
+        const OVERFLOW = 0b0100_0000;
+        const NEGATIVE = 0b1000_0000;
+    }
+}
+
 pub struct C6502 {
     acc: u8,
     pc: u16,
     sp: u8,
-    status: u8,
+    status: Status,
     x: u8,
     y: u8,
     mmap: MemoryMap,
@@ -29,7 +42,7 @@ impl C6502 {
             acc: 0,
             pc: 0x400,
             sp: 0,
-            status: 0,
+            status: Status::empty(),
             x: 0,
             y: 0,
             mmap: mmap,
@@ -80,7 +93,8 @@ impl C6502 {
     }
 
     fn imp(&mut self) -> bool {
-        unimplemented!()
+        // Nothing needs to be done
+        return false;
     }
 
     fn rel(&mut self) -> bool {
@@ -183,7 +197,8 @@ impl C6502 {
     }
 
     fn cld(&mut self) -> bool {
-        unimplemented!()
+        self.status.set(Status::DECIMAL, false);
+        return false;
     }
 
     fn cli(&mut self) -> bool {
