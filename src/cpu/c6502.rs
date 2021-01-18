@@ -1,5 +1,9 @@
 use crate::memory::MemoryMap;
 
+lazy_static! {
+    static ref INSTRUCTIONS: [[Instruction; 16]; 16] = C6502::init_instruction_table();
+}
+
 pub struct C6502 {
     acc: u8,
     pc: u16,
@@ -8,10 +12,9 @@ pub struct C6502 {
     x: u8,
     y: u8,
     mmap: MemoryMap,
-    instructions: [[Instruction; 16]; 16]
 }
 
-type AddrFn = fn(&C6502) -> bool;
+type AddrFn = fn(&mut C6502) -> bool;
 type InstrFn = fn(&mut C6502) -> bool;
 struct Instruction {
     name: String,
@@ -30,13 +33,12 @@ impl C6502 {
             x: 0,
             y: 0,
             mmap: mmap,
-            instructions: C6502::init_instruction_table(),
         }
     }
 
     pub fn tick(&mut self) {
         let op = self.mmap.read(self.pc) as usize;
-        let instr = &self.instructions[((op & 0xF0) >> 4) as usize][(op & 0xF) as usize];
+        let instr = &INSTRUCTIONS[((op & 0xF0) >> 4) as usize][(op & 0xF) as usize];
         println!("Instruction: {}, Cycles: {}", instr.name, instr.cycles);
         let _ = (instr.addr_fn)(self);
         let _ = (instr.instr_fn)(self);
