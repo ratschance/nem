@@ -17,6 +17,9 @@ bitflags! {
     }
 }
 
+const RESET_VECTOR_ADDRESS: u16 = 0xFFFC;
+
+#[derive(Debug)]
 pub struct C6502 {
     acc: u8,
     pc: u16,
@@ -25,6 +28,32 @@ pub struct C6502 {
     x: u8,
     y: u8,
     mmap: MemoryMap,
+    instr: &'static Instruction,
+    operand: u16,
+    state: State,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum State {
+    Running,
+    InfiniteLoop,
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, PartialEq)]
+enum AddrMode {
+    abs,
+    abx,
+    aby,
+    imm,
+    imp,
+    ind,
+    izx,
+    izy,
+    rel,
+    zp0,
+    zpx,
+    zpy,
 }
 
 type AddrFn = fn(&mut C6502) -> bool;
@@ -32,6 +61,7 @@ type InstrFn = fn(&mut C6502) -> bool;
 struct Instruction {
     name: String,
     instr_fn: InstrFn,
+    addr_mode: AddrMode,
     addr_fn: AddrFn,
     cycles: u8,
 }
@@ -40,25 +70,46 @@ impl C6502 {
     pub fn new(mmap: MemoryMap) -> Self {
         C6502 {
             acc: 0,
-            pc: 0x400,
+            pc: 0,
             sp: 0,
             status: Status::empty(),
             x: 0,
             y: 0,
             mmap,
+            instr: &INSTRUCTIONS[2],
+            operand: 0,
+            state: State::Running,
         }
     }
 
-    pub fn tick(&mut self) {
-        let op = self.mmap.read(self.pc) as usize;
-        let instr = &INSTRUCTIONS[op];
-        println!("Instruction: {}, Cycles: {}", instr.name, instr.cycles);
-        let _ = (instr.addr_fn)(self);
-        let _ = (instr.instr_fn)(self);
-        self.pc += 1;
+    pub fn reset(&mut self) {
+        self.acc = 0;
+        self.sp = 0;
+        self.status = Status::empty();
+        self.x = 0;
+        self.y = 0;
+        self.instr = &INSTRUCTIONS[2];
+        self.operand = 0;
+        self.state = State::Running;
+
+        self.pc = u16::from(self.mmap.read(RESET_VECTOR_ADDRESS + 1)) << 8
+            | u16::from(self.mmap.read(RESET_VECTOR_ADDRESS));
     }
 
-    // Addressing Modes
+    pub fn tick(&mut self) {
+        self.operand = 0;
+
+        let op = self.mmap.read(self.pc) as usize;
+        self.pc += 1;
+        self.instr = &INSTRUCTIONS[op];
+        let _ = (self.instr.addr_fn)(self);
+        let _ = (self.instr.instr_fn)(self);
+        println!("{}", self);
+    }
+
+    pub fn get_execution_state(&self) -> &State {
+        &self.state
+    }
 
     fn imm(&mut self) -> bool {
         unimplemented!()
@@ -116,6 +167,7 @@ impl C6502 {
                 Instruction {
                     name: stringify!($x).to_string(),
                     instr_fn: C6502::$x,
+                    addr_mode: AddrMode::$y,
                     addr_fn: C6502::$y,
                     cycles: $z
                 }
@@ -368,6 +420,78 @@ impl C6502 {
     }
 
     fn xxx(&mut self) -> bool {
-        unimplemented!()
+        panic!("Invalid Opcode: {}", self.mmap.read(self.pc - 1))
+    }
+}
+
+impl std::fmt::Debug for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Instruction")
+            .field("name", &self.name)
+            .field("mode", &self.addr_mode)
+            .field("cycles", &self.cycles)
+            .finish()
+    }
+}
+
+impl std::fmt::Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "instr: {}, mode: {:?}", &self.name, &self.addr_mode)
+    }
+}
+
+impl std::fmt::Display for C6502 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f,
+             "{}, operand: #{:04x}, pc: #{:04x}, acc: #{:02x}, x: #{:02x}, y: #{:02x}, sp: #{:02x}, flags: {:?}", 
+             &self.instr,
+             &self.operand,
+             &self.pc,
+             &self.acc,
+             &self.x,
+             &self.y,
+             &self.sp,
+             &self.status)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_run_opcode_test() {
+        use crate::memory::Ram;
+        use std::fs::File;
+        use std::io::prelude::*;
+        use std::path::PathBuf;
+
+        let mut cart = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        cart.push("assets/test/6502_functional_test.bin");
+        let mut rom = File::open(cart).expect("Unable to open test rom");
+        let mut bs = vec![];
+        rom.read_to_end(&mut bs)
+            .expect("Unable to read cartridge into memory");
+
+        bs[RESET_VECTOR_ADDRESS as usize] = 0x00;
+        bs[(RESET_VECTOR_ADDRESS + 1) as usize] = 0x04;
+
+        let mut cpu_mmap = MemoryMap::new();
+        cpu_mmap.register(0x0, 0xFFFF, Box::new(Ram::new_with_bs(&bs)));
+        let mut cpu = C6502::new(cpu_mmap);
+        cpu.reset();
+
+        loop {
+            cpu.tick();
+
+            if cpu.get_execution_state() == &State::InfiniteLoop {
+                assert_eq!(
+                    cpu.pc, 0x336D,
+                    "Functional test suite failed. Current State:\n {:#x?}",
+                    cpu
+                );
+                break;
+            }
+        }
     }
 }

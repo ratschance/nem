@@ -17,6 +17,8 @@ pub trait Memory {
     /// * `addr` - Address to write to
     /// * `val` - Value to write
     fn write(&mut self, addr: u16, val: u8);
+
+    fn name(&self) -> &str;
 }
 
 pub struct Ram {
@@ -29,6 +31,12 @@ impl Ram {
             backing_store: vec![0; size],
         }
     }
+
+    pub fn new_with_bs(data: &[u8]) -> Self {
+        Ram {
+            backing_store: data.to_owned(),
+        }
+    }
 }
 
 impl Memory for Ram {
@@ -38,6 +46,10 @@ impl Memory for Ram {
 
     fn write(&mut self, addr: u16, val: u8) {
         self.backing_store[addr as usize] = val;
+    }
+
+    fn name(&self) -> &str {
+        "RAM"
     }
 }
 
@@ -61,6 +73,10 @@ impl Memory for Rom {
     fn write(&mut self, addr: u16, val: u8) {
         panic!("Attempted to write [{}] to ROM at addr [{}]", val, addr)
     }
+
+    fn name(&self) -> &str {
+        "ROM"
+    }
 }
 
 pub struct Mirrored {
@@ -82,10 +98,21 @@ impl Memory for Mirrored {
     fn write(&mut self, addr: u16, val: u8) {
         self.mem.write(addr % self.virtual_size as u16, val)
     }
+
+    fn name(&self) -> &str {
+        "Mirrored"
+    }
 }
 
+#[derive(Debug)]
 pub struct MemoryMap {
     items: Vec<(u16, u16, Box<dyn Memory>)>,
+}
+
+impl std::fmt::Debug for dyn Memory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Memory",)
+    }
 }
 
 impl MemoryMap {
