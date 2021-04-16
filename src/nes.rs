@@ -2,7 +2,7 @@ use crate::cpu::c6502::C6502;
 use crate::memory::{MemoryMap, Mirrored, Ram, Rom};
 
 pub struct Nes {
-    c6502: C6502,
+    pub c6502: C6502,
 }
 
 impl Nes {
@@ -25,6 +25,10 @@ impl Nes {
     }
 
     pub fn tick(&mut self) {
-        self.c6502.tick()
+        self.c6502.tick();
+    }
+
+    pub fn reset(&mut self) {
+        self.c6502.reset();
     }
 }

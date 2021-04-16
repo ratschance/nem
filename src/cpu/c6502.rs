@@ -111,16 +111,33 @@ impl C6502 {
         &self.state
     }
 
+    fn set_zn(&mut self, val: u8) {
+        self.status.set(Status::ZERO, val == 0);
+        self.status.set(Status::NEGATIVE, (val & 0x80) != 0);
+    }
+
+    // Addressing Modes
     fn imm(&mut self) -> bool {
-        unimplemented!()
+        // Immediate addressing uses the 2nd byte of the instruction as the address
+        self.operand = self.mmap.read(self.pc) as u16;
+        self.pc += 1;
+        false
     }
 
     fn abs(&mut self) -> bool {
-        unimplemented!()
+        let lo = self.mmap.read(self.pc) as u16;
+        self.pc += 1;
+        let hi = self.mmap.read(self.pc) as u16;
+        self.pc += 1;
+
+        self.operand = (hi << 8) | lo;
+        false
     }
 
     fn zp0(&mut self) -> bool {
-        unimplemented!()
+        self.operand = (self.mmap.read(self.pc) as u16) & 0xff;
+        self.pc += 1;
+        false
     }
 
     fn zpx(&mut self) -> bool {
@@ -145,7 +162,10 @@ impl C6502 {
     }
 
     fn rel(&mut self) -> bool {
-        unimplemented!()
+        // Read and extend sign before casting to u16
+        self.operand = self.mmap.read(self.pc) as i8 as i16 as u16;
+        self.pc += 1;
+        false
     }
 
     fn ind(&mut self) -> bool {
@@ -194,28 +214,97 @@ impl C6502 {
     }
 
     // Instructions
+
+    /// # ADC - Add with Carry
+    /// Add the contents of a memory location to the acc together with the carry bit. If
+    /// overflow occurs, the carry bit is set.
+    ///
+    /// The following truth table is for calculating overflow based on whether each item
+    /// is negative.
+    /// 
+    /// | acc | op | res | O |
+    /// |-----|----|-----|---|
+    /// | 0   | 0  | 0   | 0 |
+    /// | 0   | 0  | 1   | 1 |
+    /// | 0   | 1  | 0   | 0 |
+    /// | 0   | 1  | 1   | 0 |
+    /// | 1   | 0  | 0   | 0 |
+    /// | 1   | 0  | 1   | 0 |
+    /// | 1   | 1  | 0   | 1 |
+    /// | 1   | 1  | 1   | 0 |
+    /// 
+    /// `x'y'z + xyz' ->  !(x ^ y) && (y ^ z)`
     fn adc(&mut self) -> bool {
-        unimplemented!()
+        let carry = self.status.contains(Status::CARRY) as u16;
+        let operand = if self.instr.addr_mode == AddrMode::imm {
+            self.operand
+        } else {
+            self.mmap.read(self.operand) as u16
+        };
+        let val = self.acc as u16 + operand + carry;
+
+        let out_neg = val & 0x80 == 0x80;
+        let op_neg = operand & 0x80 == 0x80;
+        let acc_neg = self.acc & 0x80 == 0x80;
+
+        // handle overflow
+        self.status.set(Status::OVERFLOW, !(acc_neg ^ op_neg) && (op_neg ^ out_neg));
+
+        self.status.set(Status::ZERO, (val as u8) == 0);
+        self.status.set(Status::NEGATIVE, out_neg);
+        self.status.set(Status::CARRY, val > 0xFF);
+        self.acc = val as u8;
+        true
     }
 
+    /// AND - Logical AND
+    /// Logical AND on the acc with a byte of memory
     fn and(&mut self) -> bool {
-        unimplemented!()
+        self.acc &= self.mmap.read(self.operand);
+        self.set_zn(self.acc);
+        false
     }
 
+    /// ASL - Arithmetic Shift Left
+    /// Shift acc or memory left one bit. Set carry to bit 7 of old val.
     fn asl(&mut self) -> bool {
-        unimplemented!()
+        let (old_val, new_val) = if self.instr.addr_mode == AddrMode::imp {
+            let old_val = self.acc;
+            let new_val = old_val << 1;
+            self.acc = new_val;
+
+            (old_val, new_val)
+        } else {
+            let old_val = self.mmap.read(self.operand);
+            let new_val = old_val << 1;
+            self.mmap.write(self.operand, new_val);
+            (old_val, new_val)
+        };
+        self.set_zn(new_val);
+        self.status.set(Status::CARRY, old_val & 0x80 == 0x80);
+        false
+    }
+
+    fn branch(&mut self, cond: bool) -> bool {
+        if cond {
+            if self.operand == 0xfffe {
+                self.state = State::InfiniteLoop;
+            }
+            self.pc = self.pc.wrapping_add(self.operand);
+        }
+        true //TODO: Figure out page boundary cross for extra cycles
     }
 
     fn bcc(&mut self) -> bool {
-        unimplemented!()
+        self.branch(!self.status.contains(Status::CARRY))
     }
 
     fn bcs(&mut self) -> bool {
-        unimplemented!()
+        self.branch(self.status.contains(Status::CARRY))
     }
 
     fn beq(&mut self) -> bool {
-        unimplemented!()
+        self.branch(self.status.contains(Status::ZERO))
     }
 
     fn bit(&mut self) -> bool {
@@ -223,15 +312,17 @@ impl C6502 {
     }
 
     fn bmi(&mut self) -> bool {
-        unimplemented!()
+        self.branch(self.status.contains(Status::NEGATIVE))
     }
 
+    /// BNE - Branch if Not Equal
+    /// If the zero flag is clear, add the relative displacement to the program counter
     fn bne(&mut self) -> bool {
-        unimplemented!()
+        self.branch(!self.status.contains(Status::ZERO))
     }
 
     fn bpl(&mut self) -> bool {
-        unimplemented!()
+        self.branch(!self.status.contains(Status::NEGATIVE))
     }
 
     fn brk(&mut self) -> bool {
@@ -239,15 +330,16 @@ impl C6502 {
     }
 
     fn bvc(&mut self) -> bool {
-        unimplemented!()
+        self.branch(!self.status.contains(Status::OVERFLOW))
     }
 
     fn bvs(&mut self) -> bool {
-        unimplemented!()
+        self.branch(self.status.contains(Status::OVERFLOW))
     }
 
     fn clc(&mut self) -> bool {
-        unimplemented!()
+        self.status.set(Status::CARRY, false);
+        false
     }
 
     fn cld(&mut self) -> bool {
@@ -256,39 +348,103 @@ impl C6502 {
     }
 
     fn cli(&mut self) -> bool {
-        unimplemented!()
+        self.status.set(Status::IDISABLE, false);
+        false
     }
 
     fn clv(&mut self) -> bool {
-        unimplemented!()
+        self.status.set(Status::OVERFLOW, false);
+        false
     }
 
+    /// CMP - Compare
+    /// Compare contents of accumulator with a memory held value
+    ///
+    /// C := A >= M, Z:= A == M, N := ((A-M) & 0x80) == 0x80
     fn cmp(&mut self) -> bool {
-        unimplemented!()
+        let val = if self.instr.addr_mode == AddrMode::imm {
+            self.operand as u8
+        } else {
+            self.mmap.read(self.operand)
+        };
+        self.status.set(Status::CARRY, self.acc >= val);
+        self.status.set(Status::ZERO, self.acc == val);
+        self.status
+            .set(Status::NEGATIVE, ((self.acc.wrapping_sub(val)) & 0x80) != 0);
+        true //TODO: Figure out page boundary cross for extra cycles
     }
 
+    /// CPX - Compare X Register
+    /// Compare contents of the X register with a memory held value
+    ///
+    /// C := X >= M, Z:= X == M, N := ((X-M) & 0x80) == 0x80
     fn cpx(&mut self) -> bool {
-        unimplemented!()
+        let val = if self.instr.addr_mode == AddrMode::imm {
+            self.operand as u8
+        } else {
+            self.mmap.read(self.operand)
+        };
+        self.status.set(Status::CARRY, self.x >= val);
+        self.status.set(Status::ZERO, self.x == val);
+        self.status
+            .set(Status::NEGATIVE, ((self.x.wrapping_sub(val)) & 0x80) != 0);
+        true //TODO: Figure out page boundary cross for extra cycles
     }
 
+    /// CPY - Compare Y Register
+    /// Compare contents of the Y register with a memory held value
+    ///
+    /// C := Y >= M, Z:= Y == M, N := ((Y-M) & 0x80) == 0x80
     fn cpy(&mut self) -> bool {
-        unimplemented!()
+        let val = if self.instr.addr_mode == AddrMode::imm {
+            self.operand as u8
+        } else {
+            self.mmap.read(self.operand)
+        };
+        self.status.set(Status::CARRY, self.y >= val);
+        self.status.set(Status::ZERO, self.y == val);
+        self.status
+            .set(Status::NEGATIVE, ((self.y.wrapping_sub(val)) & 0x80) != 0);
+        true //TODO: Figure out page boundary cross for extra cycles
     }
 
+    /// DEC - Decrement Memory
+    /// Subtract one from the value held at a specified memory location and set
+    /// Z,N as appropriate
     fn dec(&mut self) -> bool {
-        unimplemented!()
+        let val = self.mmap.read(self.operand).wrapping_sub(1);
+        self.mmap.write(self.operand, val);
+        self.set_zn(val);
+        false
     }
 
+    /// DEX - Decrement X Register
+    /// Subtract one from the X register and set Z,N as appropriate
     fn dex(&mut self) -> bool {
-        unimplemented!()
+        //self.x = (self.x as i8).wrapping_sub(1) as u8;
+        self.x = self.x.wrapping_sub(1) as u8;
+        self.set_zn(self.x);
+        false
     }
 
+    /// DEY - Decrement Y Register
+    /// Subtract one from the Y register and set Z,N as appropriate
     fn dey(&mut self) -> bool {
-        unimplemented!()
+        self.y = self.y.wrapping_sub(1);
+        self.set_zn(self.y);
+        false
     }
 
+    /// EOR - Exclusive OR
+    /// Exclusive OR on the acc with a byte of memory
     fn eor(&mut self) -> bool {
-        unimplemented!()
+        if self.instr.addr_mode == AddrMode::imm {
+            self.acc ^= self.operand as u8;
+        } else {
+            self.acc ^= self.mmap.read(self.operand);
+        }
+        self.set_zn(self.acc);
+        true //TODO: Figure out page boundary cross for extra cycles
     }
 
     fn inc(&mut self) -> bool {
@@ -304,31 +460,75 @@ impl C6502 {
     }
 
     fn jmp(&mut self) -> bool {
-        unimplemented!()
+        if self.operand == self.pc - 3 {
+            self.state = State::InfiniteLoop;
+        }
+        self.pc = self.operand;
+        false
     }
 
     fn jsr(&mut self) -> bool {
         unimplemented!()
     }
 
+    /// LDA - Load Accumulator
+    /// Loads a byte of memory into the accumulator setting the Zero and Negative flags as appropriate
     fn lda(&mut self) -> bool {
-        unimplemented!()
+        if self.instr.addr_mode == AddrMode::imm {
+            self.acc = self.operand as u8;
+        } else {
+            self.acc = self.mmap.read(self.operand);
+        }
+        self.set_zn(self.acc);
+        true //TODO: Figure out page boundary cross for extra cycles
     }
 
+    /// LDX - Load X Register
+    /// Loads a byte of memory into the X register setting the Zero and Negative flags as appropriate
     fn ldx(&mut self) -> bool {
-        unimplemented!()
+        if self.instr.addr_mode == AddrMode::imm {
+            self.x = self.operand as u8;
+        } else {
+            self.x = self.mmap.read(self.operand);
+        }
+        self.set_zn(self.x);
+        true //TODO: Figure out page boundary cross for extra cycles
     }
 
+    /// LDY - Load Y Register
+    /// Loads a byte of memory into the Y register setting the Zero and Negative flags as appropriate
     fn ldy(&mut self) -> bool {
-        unimplemented!()
+        if self.instr.addr_mode == AddrMode::imm {
+            self.y = self.operand as u8;
+        } else {
+            self.y = self.mmap.read(self.operand);
+        }
+        self.set_zn(self.y);
+        true //TODO: Figure out page boundary cross for extra cycles
     }
 
+    /// LSR - Logical Shift Right
+    /// Shift either acc or memory right one bit. Set carry flag to contents of old bit 0
     fn lsr(&mut self) -> bool {
-        unimplemented!()
+        let (old_val, new_val) = if self.instr.addr_mode == AddrMode::imp {
+            let old_val = self.acc;
+            let new_val = old_val >> 1;
+            self.acc = new_val;
+
+            (old_val, new_val)
+        } else {
+            let old_val = self.mmap.read(self.operand);
+            let new_val = old_val >> 1;
+            self.mmap.write(self.operand, new_val);
+            (old_val, new_val)
+        };
+        self.set_zn(new_val);
+        self.status.set(Status::CARRY, old_val & 0x1 == 0x1);
+        false
     }
 
     fn nop(&mut self) -> bool {
-        unimplemented!()
+        false
     }
 
     fn ora(&mut self) -> bool {
@@ -384,7 +584,8 @@ impl C6502 {
     }
 
     fn sta(&mut self) -> bool {
-        unimplemented!()
+        self.mmap.write(self.operand, self.acc);
+        false
     }
 
     fn stx(&mut self) -> bool {
@@ -396,27 +597,38 @@ impl C6502 {
     }
 
     fn tax(&mut self) -> bool {
-        unimplemented!()
+        self.x = self.acc;
+        self.set_zn(self.acc);
+        false
     }
 
     fn tay(&mut self) -> bool {
-        unimplemented!()
+        self.y = self.acc;
+        self.set_zn(self.acc);
+        false
     }
 
     fn tsx(&mut self) -> bool {
-        unimplemented!()
+        self.x = self.sp;
+        self.set_zn(self.sp);
+        false
     }
 
     fn txa(&mut self) -> bool {
-        unimplemented!()
+        self.acc = self.x;
+        self.set_zn(self.acc);
+        false
     }
 
     fn txs(&mut self) -> bool {
-        unimplemented!()
+        self.sp = self.x;
+        false
     }
 
     fn tya(&mut self) -> bool {
-        unimplemented!()
+        self.acc = self.y;
+        self.set_zn(self.acc);
+        false
     }
 
     fn xxx(&mut self) -> bool {
