@@ -18,6 +18,7 @@ bitflags! {
 }
 
 const RESET_VECTOR_ADDRESS: u16 = 0xFFFC;
+const STACK_OFFSET: u16 = 0x100;
 
 #[derive(Debug)]
 pub struct C6502 {
@@ -71,7 +72,7 @@ impl C6502 {
         C6502 {
             acc: 0,
             pc: 0,
-            sp: 0,
+            sp: 0xFF,
             status: Status::empty(),
             x: 0,
             y: 0,
@@ -84,7 +85,7 @@ impl C6502 {
 
     pub fn reset(&mut self) {
         self.acc = 0;
-        self.sp = 0;
+        self.sp = 0xFF;
         self.status = Status::empty();
         self.x = 0;
         self.y = 0;
@@ -114,6 +115,16 @@ impl C6502 {
     fn set_zn(&mut self, val: u8) {
         self.status.set(Status::ZERO, val == 0);
         self.status.set(Status::NEGATIVE, (val & 0x80) != 0);
+    }
+
+    fn push_stack(&mut self, val: u8) {
+        self.mmap.write(STACK_OFFSET + u16::from(self.sp), val);
+        self.sp -= 1;
+    }
+
+    fn pop_stack(&mut self) -> u8 {
+        self.sp += 1;
+        self.mmap.read(STACK_OFFSET + u16::from(self.sp))
     }
 
     // Addressing Modes
@@ -169,7 +180,14 @@ impl C6502 {
     }
 
     fn ind(&mut self) -> bool {
-        unimplemented!()
+        let lo = self.mmap.read(self.pc) as u16;
+        let hi = self.mmap.read(self.pc + 1) as u16;
+        self.pc += 2; // Increment PC for infinite loop detection logic
+        let addr = hi << 8 | lo;
+        let lo = self.mmap.read(addr) as u16;
+        let hi = self.mmap.read(addr + 1) as u16;
+        self.operand = hi << 8 | lo;
+        false
     }
 
     fn izx(&mut self) -> bool {
@@ -448,15 +466,22 @@ impl C6502 {
     }
 
     fn inc(&mut self) -> bool {
-        unimplemented!()
+        let val = self.mmap.read(self.operand).wrapping_add(1);
+        self.mmap.write(self.operand, val);
+        self.set_zn(val);
+        false
     }
 
     fn inx(&mut self) -> bool {
-        unimplemented!()
+        self.x = self.x.wrapping_add(1);
+        self.set_zn(self.x);
+        false
     }
 
     fn iny(&mut self) -> bool {
-        unimplemented!()
+        self.y = self.y.wrapping_add(1);
+        self.set_zn(self.y);
+        false
     }
 
     fn jmp(&mut self) -> bool {
@@ -468,7 +493,11 @@ impl C6502 {
     }
 
     fn jsr(&mut self) -> bool {
-        unimplemented!()
+        let pc = self.pc - 1;
+        self.push_stack((pc >> 8) as u8);
+        self.push_stack(pc as u8);
+        self.pc = self.operand;
+        false
     }
 
     /// LDA - Load Accumulator
@@ -536,19 +565,27 @@ impl C6502 {
     }
 
     fn pha(&mut self) -> bool {
-        unimplemented!()
+        self.push_stack(self.acc);
+        false
     }
 
     fn php(&mut self) -> bool {
-        unimplemented!()
+        // PHP sets both bits of the break flag before moving it to the stack
+        self.status.set(Status::BLO, true);
+        self.status.set(Status::BHI, true);
+        self.push_stack(self.status.bits());
+        false
     }
 
     fn pla(&mut self) -> bool {
-        unimplemented!()
+        self.acc = self.pop_stack();
+        self.set_zn(self.acc);
+        false
     }
 
     fn plp(&mut self) -> bool {
-        unimplemented!()
+        self.status = Status::from_bits(self.pop_stack()).expect("Invalid flags set");
+        false
     }
 
     fn rol(&mut self) -> bool {
@@ -564,7 +601,10 @@ impl C6502 {
     }
 
     fn rts(&mut self) -> bool {
-        unimplemented!()
+        let lo = self.pop_stack() as u16;
+        let hi = self.pop_stack() as u16;
+        self.pc = ((hi << 8) | lo) + 1;
+        false
     }
 
     fn sbc(&mut self) -> bool {
@@ -698,7 +738,7 @@ mod tests {
 
             if cpu.get_execution_state() == &State::InfiniteLoop {
                 assert_eq!(
-                    cpu.pc, 0x336D,
+                    cpu.pc, 0x3469,
                     "Functional test suite failed. Current State:\n {:#x?}",
                     cpu
                 );
