@@ -41,10 +41,12 @@ impl Ram {
 
 impl Memory for Ram {
     fn read(&self, addr: u16) -> u8 {
+        //println!("Read@#{:04x}, #{:02x}", addr, self.backing_store[addr as usize]);
         self.backing_store[addr as usize]
     }
-
+    
     fn write(&mut self, addr: u16, val: u8) {
+        //println!("Update@#{:04x}, #{:02x}->#{:02x}", addr, self.backing_store[addr as usize], val);
         self.backing_store[addr as usize] = val;
     }
 
