@@ -7,8 +7,8 @@ mod cpu;
 mod memory;
 mod nes;
 
-use crate::nes::Nes;
 use crate::cpu::c6502::State;
+use crate::nes::Nes;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
