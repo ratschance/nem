@@ -94,8 +94,7 @@ impl C6502 {
         self.operand = 0;
         self.state = State::Running;
 
-        self.pc = u16::from(self.mmap.read(RESET_VECTOR_ADDRESS + 1)) << 8
-            | u16::from(self.mmap.read(RESET_VECTOR_ADDRESS));
+        self.pc = self.mmap.read16(RESET_VECTOR_ADDRESS);
     }
 
     pub fn tick(&mut self) {
@@ -155,36 +154,24 @@ mod c6502_addr_fns {
         /// Absolute
         /// Operand is a 16 bit address
         pub fn abs(&mut self) -> bool {
-            let lo = self.mmap.read(self.pc) as u16;
-            self.pc += 1;
-            let hi = self.mmap.read(self.pc) as u16;
-            self.pc += 1;
-
-            self.operand = (hi << 8) | lo;
+            self.operand = self.mmap.read16(self.pc);
+            self.pc += 2;
             false
         }
 
         /// Absolute,X
         /// Operand is a 16 bit address to be added with x
         pub fn abx(&mut self) -> bool {
-            let lo = self.mmap.read(self.pc) as u16;
-            self.pc += 1;
-            let hi = self.mmap.read(self.pc) as u16;
-            self.pc += 1;
-
-            self.operand = ((hi << 8) | lo) + self.x as u16;
+            self.operand = self.mmap.read16(self.pc) + self.x as u16;
+            self.pc += 2;
             false
         }
 
         /// Absolute,Y
         /// Operand is a 16 bit address to be added with y
         pub fn aby(&mut self) -> bool {
-            let lo = self.mmap.read(self.pc) as u16;
-            self.pc += 1;
-            let hi = self.mmap.read(self.pc) as u16;
-            self.pc += 1;
-
-            self.operand = ((hi << 8) | lo) + self.y as u16;
+            self.operand = self.mmap.read16(self.pc) + self.y as u16;
+            self.pc += 2;
             false
         }
 
@@ -214,13 +201,9 @@ mod c6502_addr_fns {
         /// Indirect
         /// Operand is a 16 bit address to the low byte of another 16 bit address
         pub fn ind(&mut self) -> bool {
-            let lo = self.mmap.read(self.pc) as u16;
-            let hi = self.mmap.read(self.pc + 1) as u16;
+            let addr = self.mmap.read16(self.pc);
             self.pc += 2; // Increment PC for infinite loop detection logic
-            let addr = hi << 8 | lo;
-            let lo = self.mmap.read(addr) as u16;
-            let hi = self.mmap.read(addr + 1) as u16;
-            self.operand = hi << 8 | lo;
+            self.operand = self.mmap.read16(addr);
             false
         }
 
@@ -229,9 +212,7 @@ mod c6502_addr_fns {
         pub fn izx(&mut self) -> bool {
             let zp_off = self.mmap.read(self.pc).wrapping_add(self.x) as u16;
             self.pc += 1;
-            let lo = self.mmap.read(zp_off) as u16;
-            let hi = self.mmap.read(zp_off + 1) as u16;
-            self.operand = hi << 8 | lo;
+            self.operand = self.mmap.read16(zp_off);
             true
         }
 
@@ -240,9 +221,7 @@ mod c6502_addr_fns {
         pub fn izy(&mut self) -> bool {
             let zp_off = self.mmap.read(self.pc) as u16;
             self.pc += 1;
-            let lo = self.mmap.read(zp_off) as u16;
-            let hi = self.mmap.read(zp_off + 1) as u16;
-            self.operand = (hi << 8 | lo) + self.y as u16;
+            self.operand = self.mmap.read16(zp_off) + self.y as u16;
             true
         }
 
@@ -338,6 +317,21 @@ mod c6502_op_fns {
                 }
                 self.pc = self.pc.wrapping_add(self.operand);
             }
+            true //TODO: Figure out page boundary cross for extra cycles
+        }
+
+        /// Register agnostic implementation of the compare routine
+        /// C := X >= M, Z:= X == M, N := ((X-M) & 0x80) == 0x80
+        fn compare(&mut self, val: u8) -> bool {
+            let operand = if self.instr.addr_mode == AddrMode::imm {
+                self.operand as u8
+            } else {
+                self.mmap.read(self.operand)
+            };
+            self.status.set(Status::CARRY, val >= operand);
+            self.status.set(Status::ZERO, val == operand);
+            self.status
+                .set(Status::NEGATIVE, val.wrapping_sub(operand) & 0x80 != 0);
             true //TODO: Figure out page boundary cross for extra cycles
         }
 
@@ -480,33 +474,14 @@ mod c6502_op_fns {
         ///
         /// C := A >= M, Z:= A == M, N := ((A-M) & 0x80) == 0x80
         pub fn cmp(&mut self) -> bool {
-            let val = if self.instr.addr_mode == AddrMode::imm {
-                self.operand as u8
-            } else {
-                self.mmap.read(self.operand)
-            };
-            self.status.set(Status::CARRY, self.acc >= val);
-            self.status.set(Status::ZERO, self.acc == val);
-            self.status
-                .set(Status::NEGATIVE, ((self.acc.wrapping_sub(val)) & 0x80) != 0);
-            true //TODO: Figure out page boundary cross for extra cycles
+            self.compare(self.acc)
         }
 
         /// CPX - Compare X Register
         /// Compare contents of the X register with a memory held value
         ///
-        /// C := X >= M, Z:= X == M, N := ((X-M) & 0x80) == 0x80
         pub fn cpx(&mut self) -> bool {
-            let val = if self.instr.addr_mode == AddrMode::imm {
-                self.operand as u8
-            } else {
-                self.mmap.read(self.operand)
-            };
-            self.status.set(Status::CARRY, self.x >= val);
-            self.status.set(Status::ZERO, self.x == val);
-            self.status
-                .set(Status::NEGATIVE, ((self.x.wrapping_sub(val)) & 0x80) != 0);
-            true //TODO: Figure out page boundary cross for extra cycles
+            self.compare(self.x)
         }
 
         /// CPY - Compare Y Register
@@ -514,16 +489,7 @@ mod c6502_op_fns {
         ///
         /// C := Y >= M, Z:= Y == M, N := ((Y-M) & 0x80) == 0x80
         pub fn cpy(&mut self) -> bool {
-            let val = if self.instr.addr_mode == AddrMode::imm {
-                self.operand as u8
-            } else {
-                self.mmap.read(self.operand)
-            };
-            self.status.set(Status::CARRY, self.y >= val);
-            self.status.set(Status::ZERO, self.y == val);
-            self.status
-                .set(Status::NEGATIVE, ((self.y.wrapping_sub(val)) & 0x80) != 0);
-            true //TODO: Figure out page boundary cross for extra cycles
+            self.compare(self.y)
         }
 
         /// DEC - Decrement Memory
