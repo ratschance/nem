@@ -1,0 +1,31 @@
+# Instructions with extra cycles
+$7D - ADC - ABX +1 if addition changes page
+$79 - ADC - ABY +1 if addition changes page
+$71 - ADC - IZY +1 if addition changes page
+$3D - AND - ABX +1 if addition changes page
+$39 - AND - ABY +1 if addition changes page
+$31 - AND - IZY +1 if addition changes page
+$90 - BCC - REL +1 if branch, +2 if to new page
+$B0 - BEQ - REL +1 if branch, +2 if to new page
+$30 - BMI - REL +1 if branch, +2 if to new page
+$D0 - BNE - REL +1 if branch, +2 if to new page
+$10 - BPL - REL +1 if branch, +2 if to new page
+$50 - BVC - REL +1 if branch, +2 if to new page
+$70 - BVS - REL +1 if branch, +2 if to new page
+$DD - CMP - ABX +1 if addition changes page
+$D9 - CMP - ABY +1 if addition changes page
+$D1 - CMP - IZY +1 if addition changes page
+$5D - EOR - ABX +1 if addition changes page
+$59 - EOR - ABY +1 if addition changes page
+$51 - EOR - IZY +1 if addition changes page
+$BD - LDA - ABX +1 if addition changes page
+$B9 - LDA - ABY +1 if addition changes page
+$B1 - LDA - IZY +1 if addition changes page
+$BE - LDX - ABY +1 if addition changes page
+$BC - LDY - ABY +1 if addition changes page
+$1D - ORA - ABX +1 if addition changes page
+$19 - ORA - ABY +1 if addition changes page
+$11 - ORA - IZY +1 if addition changes page
+$FD - SBC - ABX +1 if addition changes page
+$F9 - SBC - ABY +1 if addition changes page
+$F1 - SBC - IZY +1 if addition changes page

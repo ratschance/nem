@@ -33,6 +33,7 @@ pub struct C6502 {
     instr: &'static Instruction,
     operand: u16,
     state: State,
+    remaining_cycles: u8,
 }
 
 #[derive(Debug, PartialEq)]
@@ -81,6 +82,7 @@ impl C6502 {
             instr: &INSTRUCTIONS[2],
             operand: 0,
             state: State::Running,
+            remaining_cycles: 0,
         }
     }
 
@@ -93,19 +95,24 @@ impl C6502 {
         self.instr = &INSTRUCTIONS[2];
         self.operand = 0;
         self.state = State::Running;
+        self.remaining_cycles = 0;
 
         self.pc = self.mmap.read16(RESET_VECTOR_ADDRESS);
     }
 
     pub fn tick(&mut self) {
-        self.operand = 0;
-
-        let op = self.mmap.read(self.pc) as usize;
-        self.pc += 1;
-        self.instr = &INSTRUCTIONS[op];
-        let _ = (self.instr.addr_fn)(self);
-        let _ = (self.instr.instr_fn)(self);
-        //println!("{}", self);
+        if self.remaining_cycles == 0 {
+            self.operand = 0;
+            let op = self.mmap.read(self.pc) as usize;
+            self.pc += 1;
+            self.instr = &INSTRUCTIONS[op];
+            let extra_addr_cyc = (self.instr.addr_fn)(self);
+            let extra_op_cyc = (self.instr.instr_fn)(self);
+            self.remaining_cycles += self.instr.cycles - 1 + (extra_addr_cyc && extra_op_cyc) as u8;
+            //println!("{}", self);
+        } else {
+            self.remaining_cycles -= 1;
+        }
     }
 
     pub fn get_execution_state(&self) -> &State {
@@ -150,6 +157,10 @@ impl C6502 {
 mod c6502_addr_fns {
     pub(crate) use super::C6502;
 
+    fn is_same_page(addr1: u16, addr2: u16) -> bool {
+        (addr1 & 0xFF00) == (addr2 & 0xFF00)
+    }
+
     impl C6502 {
         /// Absolute
         /// Operand is a 16 bit address
@@ -162,17 +173,19 @@ mod c6502_addr_fns {
         /// Absolute,X
         /// Operand is a 16 bit address to be added with x
         pub fn abx(&mut self) -> bool {
-            self.operand = self.mmap.read16(self.pc) + self.x as u16;
+            let base = self.mmap.read16(self.pc);
+            self.operand = base + self.x as u16;
             self.pc += 2;
-            false
+            !is_same_page(self.operand, base)
         }
 
         /// Absolute,Y
         /// Operand is a 16 bit address to be added with y
         pub fn aby(&mut self) -> bool {
-            self.operand = self.mmap.read16(self.pc) + self.y as u16;
+            let base = self.mmap.read16(self.pc);
+            self.operand = base + self.y as u16;
             self.pc += 2;
-            false
+            !is_same_page(self.operand, base)
         }
 
         /// Immediate
@@ -194,8 +207,9 @@ mod c6502_addr_fns {
         pub fn rel(&mut self) -> bool {
             // Read and extend sign before casting to u16
             self.operand = self.mmap.read(self.pc) as i8 as i16 as u16;
+            let is_new_page = !is_same_page(self.pc, self.operand);
             self.pc += 1;
-            false
+            is_new_page
         }
 
         /// Indirect
@@ -213,16 +227,17 @@ mod c6502_addr_fns {
             let zp_off = self.mmap.read(self.pc).wrapping_add(self.x) as u16;
             self.pc += 1;
             self.operand = self.mmap.read16(zp_off);
-            true
+            false
         }
 
         /// Indirect Indexed
         /// Operand is 8 bit address on zero page pointing to the low byte of a 16 bit address to be added with y
         pub fn izy(&mut self) -> bool {
             let zp_off = self.mmap.read(self.pc) as u16;
+            let base = self.mmap.read16(zp_off);
+            self.operand = base + self.y as u16;
             self.pc += 1;
-            self.operand = self.mmap.read16(zp_off) + self.y as u16;
-            true
+            !is_same_page(self.operand, base)
         }
 
         /// Zero Page
@@ -315,9 +330,12 @@ mod c6502_op_fns {
                 if self.operand == 0xfffe {
                     self.state = State::InfiniteLoop;
                 }
+                self.remaining_cycles += 1; // Add one cycle for taking the branch
                 self.pc = self.pc.wrapping_add(self.operand);
+                true // Return true so extra cycles are counted if the page changed
+            } else {
+                false
             }
-            true //TODO: Figure out page boundary cross for extra cycles
         }
 
         /// Register agnostic implementation of the compare routine
@@ -332,7 +350,7 @@ mod c6502_op_fns {
             self.status.set(Status::ZERO, val == operand);
             self.status
                 .set(Status::NEGATIVE, val.wrapping_sub(operand) & 0x80 != 0);
-            true //TODO: Figure out page boundary cross for extra cycles
+            true
         }
 
         /// ADC - Add with Carry
@@ -356,7 +374,7 @@ mod c6502_op_fns {
                 self.acc &= self.mmap.read(self.operand);
             }
             self.set_zn(self.acc);
-            true //TODO: Figure out page boundary cross for extra cycles
+            true
         }
 
         /// ASL - Arithmetic Shift Left
@@ -526,7 +544,7 @@ mod c6502_op_fns {
                 self.acc ^= self.mmap.read(self.operand);
             }
             self.set_zn(self.acc);
-            true //TODO: Figure out page boundary cross for extra cycles
+            true
         }
 
         /// INC - Increment Memory
@@ -583,7 +601,7 @@ mod c6502_op_fns {
                 self.acc = self.mmap.read(self.operand);
             }
             self.set_zn(self.acc);
-            true //TODO: Figure out page boundary cross for extra cycles
+            true
         }
 
         /// LDX - Load X Register
@@ -595,7 +613,7 @@ mod c6502_op_fns {
                 self.x = self.mmap.read(self.operand);
             }
             self.set_zn(self.x);
-            true //TODO: Figure out page boundary cross for extra cycles
+            true
         }
 
         /// LDY - Load Y Register
@@ -607,7 +625,7 @@ mod c6502_op_fns {
                 self.y = self.mmap.read(self.operand);
             }
             self.set_zn(self.y);
-            true //TODO: Figure out page boundary cross for extra cycles
+            true
         }
 
         /// LSR - Logical Shift Right
@@ -642,7 +660,7 @@ mod c6502_op_fns {
                 self.acc |= self.mmap.read(self.operand);
             }
             self.set_zn(self.acc);
-            true //TODO: Figure out page boundary cross for extra cycles
+            true
         }
 
         /// PHA - Push Accumulator
@@ -890,6 +908,7 @@ impl C6502 {
             instr: &INSTRUCTIONS[idx],
             operand: 0,
             state: State::Running,
+            remaining_cycles: 0,
         }
     }
 }
