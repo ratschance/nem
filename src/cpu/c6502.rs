@@ -31,7 +31,6 @@ pub struct C6502 {
     y: u8,
     mmap: MemoryMap,
     instr: &'static Instruction,
-    operand: u16,
     state: State,
     remaining_cycles: u8,
 }
@@ -59,8 +58,8 @@ enum AddrMode {
     zpy,
 }
 
-type AddrFn = fn(&mut C6502) -> bool;
-type InstrFn = fn(&mut C6502) -> bool;
+type AddrFn = fn(&mut C6502) -> (bool, u16);
+type InstrFn = fn(&mut C6502, u16) -> bool;
 struct Instruction {
     name: String,
     instr_fn: InstrFn,
@@ -80,7 +79,6 @@ impl C6502 {
             y: 0,
             mmap,
             instr: &INSTRUCTIONS[2],
-            operand: 0,
             state: State::Running,
             remaining_cycles: 0,
         }
@@ -93,7 +91,6 @@ impl C6502 {
         self.x = 0;
         self.y = 0;
         self.instr = &INSTRUCTIONS[2];
-        self.operand = 0;
         self.state = State::Running;
         self.remaining_cycles = 0;
 
@@ -102,12 +99,10 @@ impl C6502 {
 
     pub fn tick(&mut self) {
         if self.remaining_cycles == 0 {
-            self.operand = 0;
-            let op = self.mmap.read(self.pc) as usize;
-            self.pc += 1;
+            let op = self.next_pc() as usize;
             self.instr = &INSTRUCTIONS[op];
-            let extra_addr_cyc = (self.instr.addr_fn)(self);
-            let extra_op_cyc = (self.instr.instr_fn)(self);
+            let (extra_addr_cyc, operand)  = (self.instr.addr_fn)(self);
+            let extra_op_cyc = (self.instr.instr_fn)(self, operand);
             self.remaining_cycles += self.instr.cycles - 1 + (extra_addr_cyc && extra_op_cyc) as u8;
             //println!("{}", self);
         } else {
@@ -117,6 +112,20 @@ impl C6502 {
 
     pub fn get_execution_state(&self) -> &State {
         &self.state
+    }
+
+    /// Read the next byte at the PC and advance it by one
+    fn next_pc(&mut self) -> u8 {
+        let byte = self.mmap.read(self.pc);
+        self.pc += 1;
+        byte
+    }
+
+    /// Read the next two bytes at the PC and advance it by two
+    fn next_pc16(&mut self) -> u16 {
+        let bytes = self.mmap.read16(self.pc);
+        self.pc += 2;
+        bytes
     }
 
     #[rustfmt::skip]
@@ -164,104 +173,90 @@ mod c6502_addr_fns {
     impl C6502 {
         /// Absolute
         /// Operand is a 16 bit address
-        pub fn abs(&mut self) -> bool {
-            self.operand = self.mmap.read16(self.pc);
-            self.pc += 2;
-            false
+        pub fn abs(&mut self) -> (bool, u16) {
+            (false, self.next_pc16())
         }
 
         /// Absolute,X
         /// Operand is a 16 bit address to be added with x
-        pub fn abx(&mut self) -> bool {
-            let base = self.mmap.read16(self.pc);
-            self.operand = base + self.x as u16;
-            self.pc += 2;
-            !is_same_page(self.operand, base)
+        pub fn abx(&mut self) -> (bool, u16) {
+            let base = self.next_pc16();
+            let operand = base + self.x as u16;
+            (!is_same_page(operand, base), operand)
         }
 
         /// Absolute,Y
         /// Operand is a 16 bit address to be added with y
-        pub fn aby(&mut self) -> bool {
-            let base = self.mmap.read16(self.pc);
-            self.operand = base + self.y as u16;
-            self.pc += 2;
-            !is_same_page(self.operand, base)
+        pub fn aby(&mut self) -> (bool, u16) {
+            let base = self.next_pc16();
+            let operand = base + self.y as u16;
+            (!is_same_page(operand, base), operand)
         }
 
         /// Immediate
         /// Operand is an 8 bit constant
-        pub fn imm(&mut self) -> bool {
-            self.operand = self.pc;
+        pub fn imm(&mut self) -> (bool, u16) {
+            let addr = self.pc;
             self.pc += 1;
-            false
+            (false, addr)
         }
 
         /// Implicit
-        pub fn imp(&mut self) -> bool {
+        pub fn imp(&mut self) -> (bool, u16) {
             // Nothing needs to be done
-            false
+            (false, 0)
         }
 
         /// Relative
         /// Operand is a relative offset
-        pub fn rel(&mut self) -> bool {
+        pub fn rel(&mut self) -> (bool, u16) {
             // Read and extend sign before casting to u16
-            self.operand = self.mmap.read(self.pc) as i8 as i16 as u16;
-            let is_new_page = !is_same_page(self.pc, self.operand);
-            self.pc += 1;
-            is_new_page
+            let operand = self.next_pc() as i8 as i16 as u16;
+            let is_new_page = !is_same_page(self.pc, operand);
+            (is_new_page, operand)
         }
 
         /// Indirect
         /// Operand is a 16 bit address to the low byte of another 16 bit address
-        pub fn ind(&mut self) -> bool {
-            let addr = self.mmap.read16(self.pc);
-            self.pc += 2; // Increment PC for infinite loop detection logic
-            self.operand = self.mmap.read16(addr);
-            false
+        pub fn ind(&mut self) -> (bool, u16) {
+            let addr = self.next_pc16();
+            (false, self.mmap.read16(addr))
         }
 
         /// Indexed Indirect
         /// Operand is 8 bit address on zero page to be added with x, pointing to the low byte of a 16 bit address
-        pub fn izx(&mut self) -> bool {
-            let zp_off = self.mmap.read(self.pc).wrapping_add(self.x) as u16;
-            self.pc += 1;
-            self.operand = self.mmap.read16(zp_off);
-            false
+        pub fn izx(&mut self) -> (bool, u16) {
+            let zp_off = self.next_pc().wrapping_add(self.x) as u16;
+            (false, self.mmap.read16(zp_off))
         }
 
         /// Indirect Indexed
         /// Operand is 8 bit address on zero page pointing to the low byte of a 16 bit address to be added with y
-        pub fn izy(&mut self) -> bool {
-            let zp_off = self.mmap.read(self.pc) as u16;
+        pub fn izy(&mut self) -> (bool, u16) {
+            let zp_off = self.next_pc() as u16;
             let base = self.mmap.read16(zp_off);
-            self.operand = base + self.y as u16;
-            self.pc += 1;
-            !is_same_page(self.operand, base)
+            let operand = base + self.y as u16;
+            (!is_same_page(operand, base), operand)
         }
 
         /// Zero Page
         /// Operand is 8 bit address for the the first 256 bytes of memory
-        pub fn zp0(&mut self) -> bool {
-            self.operand = self.mmap.read(self.pc) as u16;
-            self.pc += 1;
-            false
+        pub fn zp0(&mut self) -> (bool, u16) {
+            (false, self.next_pc() as u16)
         }
 
         /// Zero Page,X
         /// Operand is 8 bit address for the the first 256 bytes of memory to be added with x
-        pub fn zpx(&mut self) -> bool {
-            self.operand = self.mmap.read(self.pc).wrapping_add(self.x) as u16;
-            self.pc += 1;
-            false
+        pub fn zpx(&mut self) -> (bool, u16) {
+            let operand = self.next_pc().wrapping_add(self.x) as u16;
+            (false, operand)
         }
 
         /// Zero Page,Y
         /// Operand is 8 bit address for the the first 256 bytes of memory to be added with y
-        pub fn zpy(&mut self) -> bool {
-            self.operand = self.mmap.read(self.pc).wrapping_add(self.y) as u16;
-            self.pc += 1;
-            false
+        pub fn zpy(&mut self) -> (bool, u16) {
+            let operand = self.next_pc().wrapping_add(self.y) as u16;
+            (false, operand)
         }
     }
 }
@@ -325,13 +320,13 @@ mod c6502_op_fns {
         }
 
         /// If `cond` is true, add the relative displacement in the operand to pc
-        fn branch(&mut self, cond: bool) -> bool {
+        fn branch(&mut self, cond: bool, operand: u16) -> bool {
             if cond {
-                if self.operand == 0xfffe {
+                if operand == 0xfffe {
                     self.state = State::InfiniteLoop;
                 }
                 self.remaining_cycles += 1; // Add one cycle for taking the branch
-                self.pc = self.pc.wrapping_add(self.operand);
+                self.pc = self.pc.wrapping_add(operand);
                 true // Return true so extra cycles are counted if the page changed
             } else {
                 false
@@ -340,8 +335,8 @@ mod c6502_op_fns {
 
         /// Register agnostic implementation of the compare routine
         /// C := X >= M, Z:= X == M, N := ((X-M) & 0x80) == 0x80
-        fn compare(&mut self, val: u8) -> bool {
-            let operand = self.mmap.read(self.operand);
+        fn compare(&mut self, val: u8, operand: u16) -> bool {
+            let operand = self.mmap.read(operand);
             self.status.set(Status::CARRY, val >= operand);
             self.status.set(Status::ZERO, val == operand);
             self.status
@@ -352,22 +347,22 @@ mod c6502_op_fns {
         /// ADC - Add with Carry
         /// Add the contents of a memory location to the acc together with the carry bit. If
         /// overflow occurs, the carry bit is set.
-        pub fn adc(&mut self) -> bool {
-            let operand = self.mmap.read(self.operand) as u16;
+        pub fn adc(&mut self, operand: u16) -> bool {
+            let operand = self.mmap.read(operand) as u16;
             self.add(operand)
         }
 
         /// AND - Logical AND
         /// Logical AND on acc with a byte of memory. Set ZN as appropriate
-        pub fn and(&mut self) -> bool {
-            self.acc &= self.mmap.read(self.operand);
+        pub fn and(&mut self, operand: u16) -> bool {
+            self.acc &= self.mmap.read(operand);
             self.set_zn(self.acc);
             true
         }
 
         /// ASL - Arithmetic Shift Left
         /// Shift acc or memory left one bit. Set carry to bit 7 of old val.
-        pub fn asl(&mut self) -> bool {
+        pub fn asl(&mut self, operand: u16) -> bool {
             let (old_val, new_val) = if self.instr.addr_mode == AddrMode::imp {
                 let old_val = self.acc;
                 let new_val = old_val << 1;
@@ -375,9 +370,9 @@ mod c6502_op_fns {
 
                 (old_val, new_val)
             } else {
-                let old_val = self.mmap.read(self.operand);
+                let old_val = self.mmap.read(operand);
                 let new_val = old_val << 1;
-                self.mmap.write(self.operand, new_val);
+                self.mmap.write(operand, new_val);
                 (old_val, new_val)
             };
             self.set_zn(new_val);
@@ -386,24 +381,24 @@ mod c6502_op_fns {
         }
 
         /// BCC - Branch if Carry Clear
-        pub fn bcc(&mut self) -> bool {
-            self.branch(!self.status.contains(Status::CARRY))
+        pub fn bcc(&mut self, operand: u16) -> bool {
+            self.branch(!self.status.contains(Status::CARRY), operand)
         }
 
         /// BCS - Branch if Carry Set
-        pub fn bcs(&mut self) -> bool {
-            self.branch(self.status.contains(Status::CARRY))
+        pub fn bcs(&mut self, operand: u16) -> bool {
+            self.branch(self.status.contains(Status::CARRY), operand)
         }
 
         /// BEQ - Branch if Equal
-        pub fn beq(&mut self) -> bool {
-            self.branch(self.status.contains(Status::ZERO))
+        pub fn beq(&mut self, operand: u16) -> bool {
+            self.branch(self.status.contains(Status::ZERO), operand)
         }
 
         /// BIT - Bit Test
         /// Take AND of acc and memory value to set Z. Bits 7 and 6 of the value from memory are copied into N and V
-        pub fn bit(&mut self) -> bool {
-            let mem = self.mmap.read(self.operand);
+        pub fn bit(&mut self, operand: u16) -> bool {
+            let mem = self.mmap.read(operand);
             self.status.set(Status::ZERO, self.acc & mem == 0x0);
             self.status.set(Status::NEGATIVE, mem & 0x80 == 0x80);
             self.status.set(Status::OVERFLOW, mem & 0x40 == 0x40);
@@ -411,23 +406,23 @@ mod c6502_op_fns {
         }
 
         /// BMI - Branch if Minus
-        pub fn bmi(&mut self) -> bool {
-            self.branch(self.status.contains(Status::NEGATIVE))
+        pub fn bmi(&mut self, operand: u16) -> bool {
+            self.branch(self.status.contains(Status::NEGATIVE), operand)
         }
 
         /// BNE - Branch if Not Equal
-        pub fn bne(&mut self) -> bool {
-            self.branch(!self.status.contains(Status::ZERO))
+        pub fn bne(&mut self, operand: u16) -> bool {
+            self.branch(!self.status.contains(Status::ZERO), operand)
         }
 
         /// BPL - Branch if Positive
-        pub fn bpl(&mut self) -> bool {
-            self.branch(!self.status.contains(Status::NEGATIVE))
+        pub fn bpl(&mut self, operand: u16) -> bool {
+            self.branch(!self.status.contains(Status::NEGATIVE), operand)
         }
 
         /// BRK - Force Interrupt
         /// Forces an IRQ. The pc and status are pushed onto the stack, then IRQ vector is loaded into the PC and break flag is set to 1
-        pub fn brk(&mut self) -> bool {
+        pub fn brk(&mut self, _operand: u16) -> bool {
             let mut status = self.status;
             self.pc += 1; // BRK advances the saved pc an extra step
             status.set(Status::BLO, true);
@@ -442,35 +437,35 @@ mod c6502_op_fns {
         }
 
         /// BVS - Branch if Overflow Clear
-        pub fn bvc(&mut self) -> bool {
-            self.branch(!self.status.contains(Status::OVERFLOW))
+        pub fn bvc(&mut self, operand: u16) -> bool {
+            self.branch(!self.status.contains(Status::OVERFLOW), operand)
         }
 
         /// BVS - Branch if Overflow Set
-        pub fn bvs(&mut self) -> bool {
-            self.branch(self.status.contains(Status::OVERFLOW))
+        pub fn bvs(&mut self, operand: u16) -> bool {
+            self.branch(self.status.contains(Status::OVERFLOW), operand)
         }
 
         /// CLC - Clear Carry Flag
-        pub fn clc(&mut self) -> bool {
+        pub fn clc(&mut self, _operand: u16) -> bool {
             self.status.set(Status::CARRY, false);
             false
         }
 
         /// CLD - Clear Decimal Mode
-        pub fn cld(&mut self) -> bool {
+        pub fn cld(&mut self, _operand: u16) -> bool {
             self.status.set(Status::DECIMAL, false);
             false
         }
 
         /// CLI - Clear Interrupt Disable
-        pub fn cli(&mut self) -> bool {
+        pub fn cli(&mut self, _operand: u16) -> bool {
             self.status.set(Status::IDISABLE, false);
             false
         }
 
         /// CLV - Clear Overflow Flag
-        pub fn clv(&mut self) -> bool {
+        pub fn clv(&mut self, _operand: u16) -> bool {
             self.status.set(Status::OVERFLOW, false);
             false
         }
@@ -479,37 +474,37 @@ mod c6502_op_fns {
         /// Compare contents of accumulator with a memory held value
         ///
         /// C := A >= M, Z:= A == M, N := ((A-M) & 0x80) == 0x80
-        pub fn cmp(&mut self) -> bool {
-            self.compare(self.acc)
+        pub fn cmp(&mut self, operand: u16) -> bool {
+            self.compare(self.acc, operand)
         }
 
         /// CPX - Compare X Register
         /// Compare contents of the X register with a memory held value
         ///
-        pub fn cpx(&mut self) -> bool {
-            self.compare(self.x)
+        pub fn cpx(&mut self, operand: u16) -> bool {
+            self.compare(self.x, operand)
         }
 
         /// CPY - Compare Y Register
         /// Compare contents of the Y register with a memory held value
         ///
         /// C := Y >= M, Z:= Y == M, N := ((Y-M) & 0x80) == 0x80
-        pub fn cpy(&mut self) -> bool {
-            self.compare(self.y)
+        pub fn cpy(&mut self, operand: u16) -> bool {
+            self.compare(self.y, operand)
         }
 
         /// DEC - Decrement Memory
         /// Subtract one from the value at the specified memory location. Set ZN as appropriate
-        pub fn dec(&mut self) -> bool {
-            let val = self.mmap.read(self.operand).wrapping_sub(1);
-            self.mmap.write(self.operand, val);
+        pub fn dec(&mut self, operand: u16) -> bool {
+            let val = self.mmap.read(operand).wrapping_sub(1);
+            self.mmap.write(operand, val);
             self.set_zn(val);
             false
         }
 
         /// DEX - Decrement X Register
         /// Subtract one from x. Set ZN as appropriate
-        pub fn dex(&mut self) -> bool {
+        pub fn dex(&mut self, _operand: u16) -> bool {
             self.x = self.x.wrapping_sub(1) as u8;
             self.set_zn(self.x);
             false
@@ -517,7 +512,7 @@ mod c6502_op_fns {
 
         /// DEY - Decrement Y Register
         /// Subtract one from y. Set ZN as appropriate
-        pub fn dey(&mut self) -> bool {
+        pub fn dey(&mut self, _operand: u16) -> bool {
             self.y = self.y.wrapping_sub(1);
             self.set_zn(self.y);
             false
@@ -525,24 +520,24 @@ mod c6502_op_fns {
 
         /// EOR - Exclusive OR
         /// Exclusive OR on the acc with a byte of memory. Set ZN as appropriate
-        pub fn eor(&mut self) -> bool {
-            self.acc ^= self.mmap.read(self.operand);
+        pub fn eor(&mut self, operand: u16) -> bool {
+            self.acc ^= self.mmap.read(operand);
             self.set_zn(self.acc);
             true
         }
 
         /// INC - Increment Memory
         /// Add one to the value at the specified memory location. Set ZN as appropriate
-        pub fn inc(&mut self) -> bool {
-            let val = self.mmap.read(self.operand).wrapping_add(1);
-            self.mmap.write(self.operand, val);
+        pub fn inc(&mut self, operand: u16) -> bool {
+            let val = self.mmap.read(operand).wrapping_add(1);
+            self.mmap.write(operand, val);
             self.set_zn(val);
             false
         }
 
         /// INX - Increment X Register
         /// Add one to x. Set ZN as appropriate
-        pub fn inx(&mut self) -> bool {
+        pub fn inx(&mut self, _operand: u16) -> bool {
             self.x = self.x.wrapping_add(1);
             self.set_zn(self.x);
             false
@@ -550,7 +545,7 @@ mod c6502_op_fns {
 
         /// INY - Increment Y Register
         /// Add one to y. Set ZN as appropriate
-        pub fn iny(&mut self) -> bool {
+        pub fn iny(&mut self, _operand: u16) -> bool {
             self.y = self.y.wrapping_add(1);
             self.set_zn(self.y);
             false
@@ -558,51 +553,51 @@ mod c6502_op_fns {
 
         /// JMP - Jump
         /// Set the pc to the address specified by the operand
-        pub fn jmp(&mut self) -> bool {
-            if self.operand == self.pc - 3 {
+        pub fn jmp(&mut self, operand: u16) -> bool {
+            if operand == self.pc - 3 {
                 self.state = State::InfiniteLoop;
             }
-            self.pc = self.operand;
+            self.pc = operand;
             false
         }
 
         /// JSR - Jump to Subroutine
         /// Push the address (minus one) of the return point onto the stack and set pc to the target addr
-        pub fn jsr(&mut self) -> bool {
+        pub fn jsr(&mut self, operand: u16) -> bool {
             let pc = self.pc - 1;
             self.push_stack((pc >> 8) as u8);
             self.push_stack(pc as u8);
-            self.pc = self.operand;
+            self.pc = operand;
             false
         }
 
         /// LDA - Load Accumulator
         /// Loads a byte of memory into acc. Set ZN as appropriate
-        pub fn lda(&mut self) -> bool {
-            self.acc = self.mmap.read(self.operand);
+        pub fn lda(&mut self, operand: u16) -> bool {
+            self.acc = self.mmap.read(operand);
             self.set_zn(self.acc);
             true
         }
 
         /// LDX - Load X Register
         /// Loads a byte of memory into x. Set ZN as appropriate
-        pub fn ldx(&mut self) -> bool {
-            self.x = self.mmap.read(self.operand);
+        pub fn ldx(&mut self, operand: u16) -> bool {
+            self.x = self.mmap.read(operand);
             self.set_zn(self.x);
             true
         }
 
         /// LDY - Load Y Register
         /// Loads a byte of memory into y. Set ZN as appropriate.
-        pub fn ldy(&mut self) -> bool {
-            self.y = self.mmap.read(self.operand);
+        pub fn ldy(&mut self, operand: u16) -> bool {
+            self.y = self.mmap.read(operand);
             self.set_zn(self.y);
             true
         }
 
         /// LSR - Logical Shift Right
         /// Shift either acc or memory right one bit. Set carry flag to contents of old bit 0
-        pub fn lsr(&mut self) -> bool {
+        pub fn lsr(&mut self, operand: u16) -> bool {
             let (old_val, new_val) = if self.instr.addr_mode == AddrMode::imp {
                 let old_val = self.acc;
                 let new_val = old_val >> 1;
@@ -610,9 +605,9 @@ mod c6502_op_fns {
 
                 (old_val, new_val)
             } else {
-                let old_val = self.mmap.read(self.operand);
+                let old_val = self.mmap.read(operand);
                 let new_val = old_val >> 1;
-                self.mmap.write(self.operand, new_val);
+                self.mmap.write(operand, new_val);
                 (old_val, new_val)
             };
             self.set_zn(new_val);
@@ -621,26 +616,26 @@ mod c6502_op_fns {
         }
 
         /// NOP - No Operation
-        pub fn nop(&mut self) -> bool {
+        pub fn nop(&mut self, _operand: u16) -> bool {
             false
         }
 
-        pub fn ora(&mut self) -> bool {
-            self.acc |= self.mmap.read(self.operand);
+        pub fn ora(&mut self, operand: u16) -> bool {
+            self.acc |= self.mmap.read(operand);
             self.set_zn(self.acc);
             true
         }
 
         /// PHA - Push Accumulator
         /// Push a copy of acc to the stack
-        pub fn pha(&mut self) -> bool {
+        pub fn pha(&mut self, _operand: u16) -> bool {
             self.push_stack(self.acc);
             false
         }
 
         /// PHP - Push Processor Status
         /// Push a copy of status onto the stack with both Break bits set
-        pub fn php(&mut self) -> bool {
+        pub fn php(&mut self, _operand: u16) -> bool {
             let mut status = self.status;
             status.set(Status::BLO, true);
             status.set(Status::BHI, true);
@@ -650,7 +645,7 @@ mod c6502_op_fns {
 
         /// PLA - Pull Accumulator
         /// Pop stack and load into acc. Set ZN as appropriate.
-        pub fn pla(&mut self) -> bool {
+        pub fn pla(&mut self, _operand: u16) -> bool {
             self.acc = self.pop_stack();
             self.set_zn(self.acc);
             false
@@ -658,23 +653,23 @@ mod c6502_op_fns {
 
         /// PLP - Pull Processor Status
         /// Pop stack and load into status
-        pub fn plp(&mut self) -> bool {
+        pub fn plp(&mut self, _operand: u16) -> bool {
             self.status = Status::from_bits(self.pop_stack()).expect("Invalid flags set");
             false
         }
 
         /// ROL - Rotate Left
         /// Move each of the bits in either A or M one place to the left. Bit 0 is old C, Old bit 7 assigned to C
-        pub fn rol(&mut self) -> bool {
+        pub fn rol(&mut self, operand: u16) -> bool {
             let (old_val, new_val) = if self.instr.addr_mode == AddrMode::imp {
                 let old_val = self.acc;
                 let new_val = (old_val << 1) | self.status.contains(Status::CARRY) as u8;
                 self.acc = new_val;
                 (old_val, new_val)
             } else {
-                let old_val = self.mmap.read(self.operand);
+                let old_val = self.mmap.read(operand);
                 let new_val = (old_val << 1) | self.status.contains(Status::CARRY) as u8;
-                self.mmap.write(self.operand, new_val);
+                self.mmap.write(operand, new_val);
                 (old_val, new_val)
             };
             self.set_zn(new_val);
@@ -684,16 +679,16 @@ mod c6502_op_fns {
 
         /// ROR - Rotate Right
         /// Move each of the bits in either A or M one place to the right. Bit 7 is old C, Old bit 0 assigned to C
-        pub fn ror(&mut self) -> bool {
+        pub fn ror(&mut self, operand: u16) -> bool {
             let (old_val, new_val) = if self.instr.addr_mode == AddrMode::imp {
                 let old_val = self.acc;
                 let new_val = (old_val >> 1) | (self.status.contains(Status::CARRY) as u8) << 7;
                 self.acc = new_val;
                 (old_val, new_val)
             } else {
-                let old_val = self.mmap.read(self.operand);
+                let old_val = self.mmap.read(operand);
                 let new_val = (old_val >> 1) | (self.status.contains(Status::CARRY) as u8) << 7;
-                self.mmap.write(self.operand, new_val);
+                self.mmap.write(operand, new_val);
                 (old_val, new_val)
             };
             self.set_zn(new_val);
@@ -703,7 +698,7 @@ mod c6502_op_fns {
 
         /// RTI - Return from Interrupt
         /// Used after IRQ. Pop stats from stack followed by pc
-        pub fn rti(&mut self) -> bool {
+        pub fn rti(&mut self, _operand: u16) -> bool {
             self.status = Status::from_bits(self.pop_stack()).expect("Invalid flags set");
             let lo = self.pop_stack() as u16;
             let hi = self.pop_stack() as u16;
@@ -713,7 +708,7 @@ mod c6502_op_fns {
 
         /// RTS - Return from Subroutine
         /// Called after JSR. Pull pc (minus one) from stack
-        pub fn rts(&mut self) -> bool {
+        pub fn rts(&mut self, _operand: u16) -> bool {
             let lo = self.pop_stack() as u16;
             let hi = self.pop_stack() as u16;
             self.pc = ((hi << 8) | lo) + 1;
@@ -723,53 +718,53 @@ mod c6502_op_fns {
         /// SBC - Subtract with Carry
         /// Subtract the contents of a memory location to the acc together with the !carry bit. If
         /// overflow occurs, the carry bit is cleared.
-        pub fn sbc(&mut self) -> bool {
-            let operand = self.mmap.read(self.operand) as u16;
+        pub fn sbc(&mut self, operand: u16) -> bool {
+            let operand = self.mmap.read(operand) as u16;
             self.add(operand ^ 0xFF)
         }
 
         /// SEC - Set Carry Flag
-        pub fn sec(&mut self) -> bool {
+        pub fn sec(&mut self, _operand: u16) -> bool {
             self.status.set(Status::CARRY, true);
             false
         }
 
         /// SED - Set Decimal Flag
-        pub fn sed(&mut self) -> bool {
+        pub fn sed(&mut self, _operand: u16) -> bool {
             self.status.set(Status::DECIMAL, true);
             false
         }
 
         /// SEI - Set Interrupt Disable
-        pub fn sei(&mut self) -> bool {
+        pub fn sei(&mut self, _operand: u16) -> bool {
             self.status.set(Status::IDISABLE, true);
             false
         }
 
         /// STA - Store Accumulator
         /// Store acc into memory
-        pub fn sta(&mut self) -> bool {
-            self.mmap.write(self.operand, self.acc);
+        pub fn sta(&mut self, operand: u16) -> bool {
+            self.mmap.write(operand, self.acc);
             false
         }
 
         /// STX - Store X Register
         /// Store x into memory
-        pub fn stx(&mut self) -> bool {
-            self.mmap.write(self.operand, self.x);
+        pub fn stx(&mut self, operand: u16) -> bool {
+            self.mmap.write(operand, self.x);
             false
         }
 
         /// STY - Store Y Register
         /// Store y into memory
-        pub fn sty(&mut self) -> bool {
-            self.mmap.write(self.operand, self.y);
+        pub fn sty(&mut self, operand: u16) -> bool {
+            self.mmap.write(operand, self.y);
             false
         }
 
         /// TAX - Transfer Accumulator to X
         /// Copy acc to x and set ZN as appropriate
-        pub fn tax(&mut self) -> bool {
+        pub fn tax(&mut self, _operand: u16) -> bool {
             self.x = self.acc;
             self.set_zn(self.acc);
             false
@@ -777,7 +772,7 @@ mod c6502_op_fns {
 
         /// TAY - Transfer Accumulator to Y
         /// Copy acc to y and set ZN as appropriate
-        pub fn tay(&mut self) -> bool {
+        pub fn tay(&mut self, _operand: u16) -> bool {
             self.y = self.acc;
             self.set_zn(self.acc);
             false
@@ -785,7 +780,7 @@ mod c6502_op_fns {
 
         /// TSX - Transfer Stack Pointer to X
         /// Copy sp to x and set ZN as appropriate
-        pub fn tsx(&mut self) -> bool {
+        pub fn tsx(&mut self, _operand: u16) -> bool {
             self.x = self.sp;
             self.set_zn(self.sp);
             false
@@ -793,7 +788,7 @@ mod c6502_op_fns {
 
         /// TXA - Transfer X to Accumulator
         /// Copy x to acc and set ZN as appropriate
-        pub fn txa(&mut self) -> bool {
+        pub fn txa(&mut self, _operand: u16) -> bool {
             self.acc = self.x;
             self.set_zn(self.acc);
             false
@@ -801,20 +796,20 @@ mod c6502_op_fns {
 
         /// TXS - Transfer X to Stack Pointer
         /// Copy x to sp
-        pub fn txs(&mut self) -> bool {
+        pub fn txs(&mut self, _operand: u16) -> bool {
             self.sp = self.x;
             false
         }
 
         /// TYA - Transfer Y to Accumulator
         /// Copy y to acc and set ZN as appropriate
-        pub fn tya(&mut self) -> bool {
+        pub fn tya(&mut self, _operand: u16) -> bool {
             self.acc = self.y;
             self.set_zn(self.acc);
             false
         }
 
-        pub fn xxx(&mut self) -> bool {
+        pub fn xxx(&mut self, _operand: u16) -> bool {
             panic!("Invalid Opcode: {}", self.mmap.read(self.pc - 1))
         }
     }
@@ -839,9 +834,8 @@ impl std::fmt::Display for Instruction {
 impl std::fmt::Display for C6502 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f,
-             "{}, operand: #{:04x}, pc: #{:04x}, acc: #{:02x}, x: #{:02x}, y: #{:02x}, sp: #{:02x}, flags: {:?}", 
+             "{}, pc: #{:04x}, acc: #{:02x}, x: #{:02x}, y: #{:02x}, sp: #{:02x}, flags: {:?}", 
              &self.instr,
-             &self.operand,
              &self.pc,
              &self.acc,
              &self.x,
@@ -878,7 +872,6 @@ impl C6502 {
             y: 0,
             mmap: mmap,
             instr: &INSTRUCTIONS[idx],
-            operand: 0,
             state: State::Running,
             remaining_cycles: 0,
         }
@@ -896,7 +889,7 @@ mod tests {
         cpu.acc = 255;
         cpu.mmap.write(0, 1); // Immediate mode reads operand from pc
         cpu.status.set(Status::CARRY, true);
-        cpu.sbc();
+        cpu.sbc(0);
         assert_eq!(cpu.acc, 254);
         assert_eq!(cpu.status.contains(Status::OVERFLOW), false);
         assert_eq!(cpu.status.contains(Status::CARRY), true);
@@ -906,7 +899,7 @@ mod tests {
         cpu.acc = 255;
         cpu.mmap.write(0, 255);
         cpu.status.set(Status::CARRY, true);
-        cpu.sbc();
+        cpu.sbc(0);
         assert_eq!(cpu.acc, 0);
         assert_eq!(cpu.status.contains(Status::OVERFLOW), false);
         assert_eq!(cpu.status.contains(Status::CARRY), true);
@@ -917,7 +910,7 @@ mod tests {
         cpu.acc = 128;
         cpu.mmap.write(0, 1);
         cpu.status.set(Status::CARRY, true);
-        cpu.sbc();
+        cpu.sbc(0);
         assert_eq!(cpu.acc, 127);
         assert_eq!(cpu.status.contains(Status::OVERFLOW), true);
         assert_eq!(cpu.status.contains(Status::CARRY), true);
