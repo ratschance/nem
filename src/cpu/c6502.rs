@@ -191,7 +191,7 @@ mod c6502_addr_fns {
         /// Immediate
         /// Operand is an 8 bit constant
         pub fn imm(&mut self) -> bool {
-            self.operand = self.mmap.read(self.pc) as u16;
+            self.operand = self.pc;
             self.pc += 1;
             false
         }
@@ -341,11 +341,7 @@ mod c6502_op_fns {
         /// Register agnostic implementation of the compare routine
         /// C := X >= M, Z:= X == M, N := ((X-M) & 0x80) == 0x80
         fn compare(&mut self, val: u8) -> bool {
-            let operand = if self.instr.addr_mode == AddrMode::imm {
-                self.operand as u8
-            } else {
-                self.mmap.read(self.operand)
-            };
+            let operand = self.mmap.read(self.operand);
             self.status.set(Status::CARRY, val >= operand);
             self.status.set(Status::ZERO, val == operand);
             self.status
@@ -357,22 +353,14 @@ mod c6502_op_fns {
         /// Add the contents of a memory location to the acc together with the carry bit. If
         /// overflow occurs, the carry bit is set.
         pub fn adc(&mut self) -> bool {
-            let operand = if self.instr.addr_mode == AddrMode::imm {
-                self.operand
-            } else {
-                self.mmap.read(self.operand) as u16
-            };
+            let operand = self.mmap.read(self.operand) as u16;
             self.add(operand)
         }
 
         /// AND - Logical AND
         /// Logical AND on acc with a byte of memory. Set ZN as appropriate
         pub fn and(&mut self) -> bool {
-            if self.instr.addr_mode == AddrMode::imm {
-                self.acc &= self.operand as u8;
-            } else {
-                self.acc &= self.mmap.read(self.operand);
-            }
+            self.acc &= self.mmap.read(self.operand);
             self.set_zn(self.acc);
             true
         }
@@ -538,11 +526,7 @@ mod c6502_op_fns {
         /// EOR - Exclusive OR
         /// Exclusive OR on the acc with a byte of memory. Set ZN as appropriate
         pub fn eor(&mut self) -> bool {
-            if self.instr.addr_mode == AddrMode::imm {
-                self.acc ^= self.operand as u8;
-            } else {
-                self.acc ^= self.mmap.read(self.operand);
-            }
+            self.acc ^= self.mmap.read(self.operand);
             self.set_zn(self.acc);
             true
         }
@@ -595,11 +579,7 @@ mod c6502_op_fns {
         /// LDA - Load Accumulator
         /// Loads a byte of memory into acc. Set ZN as appropriate
         pub fn lda(&mut self) -> bool {
-            if self.instr.addr_mode == AddrMode::imm {
-                self.acc = self.operand as u8;
-            } else {
-                self.acc = self.mmap.read(self.operand);
-            }
+            self.acc = self.mmap.read(self.operand);
             self.set_zn(self.acc);
             true
         }
@@ -607,11 +587,7 @@ mod c6502_op_fns {
         /// LDX - Load X Register
         /// Loads a byte of memory into x. Set ZN as appropriate
         pub fn ldx(&mut self) -> bool {
-            if self.instr.addr_mode == AddrMode::imm {
-                self.x = self.operand as u8;
-            } else {
-                self.x = self.mmap.read(self.operand);
-            }
+            self.x = self.mmap.read(self.operand);
             self.set_zn(self.x);
             true
         }
@@ -619,11 +595,7 @@ mod c6502_op_fns {
         /// LDY - Load Y Register
         /// Loads a byte of memory into y. Set ZN as appropriate.
         pub fn ldy(&mut self) -> bool {
-            if self.instr.addr_mode == AddrMode::imm {
-                self.y = self.operand as u8;
-            } else {
-                self.y = self.mmap.read(self.operand);
-            }
+            self.y = self.mmap.read(self.operand);
             self.set_zn(self.y);
             true
         }
@@ -654,11 +626,7 @@ mod c6502_op_fns {
         }
 
         pub fn ora(&mut self) -> bool {
-            if self.instr.addr_mode == AddrMode::imm {
-                self.acc |= self.operand as u8;
-            } else {
-                self.acc |= self.mmap.read(self.operand);
-            }
+            self.acc |= self.mmap.read(self.operand);
             self.set_zn(self.acc);
             true
         }
@@ -756,11 +724,7 @@ mod c6502_op_fns {
         /// Subtract the contents of a memory location to the acc together with the !carry bit. If
         /// overflow occurs, the carry bit is cleared.
         pub fn sbc(&mut self) -> bool {
-            let operand = if self.instr.addr_mode == AddrMode::imm {
-                self.operand
-            } else {
-                self.mmap.read(self.operand) as u16
-            };
+            let operand = self.mmap.read(self.operand) as u16;
             self.add(operand ^ 0xFF)
         }
 
@@ -890,6 +854,10 @@ impl std::fmt::Display for C6502 {
 #[cfg(test)]
 impl C6502 {
     fn new_with_mode(mode: AddrMode) -> Self {
+        use crate::memory::Ram;
+
+        // Find an instruction with matching addressing mode. Used because
+        // the CPU only holds a reference to the current operation.
         let mut idx = 0;
         for (i, x) in INSTRUCTIONS.iter().enumerate() {
             if x.addr_mode == mode {
@@ -897,6 +865,10 @@ impl C6502 {
                 break;
             }
         }
+
+        let mut mmap = MemoryMap::new();
+        // Add a little scratch space
+        mmap.register(0, 0xFF, Box::new(Ram::new(0x100)));
         C6502 {
             acc: 0,
             pc: 0,
@@ -904,7 +876,7 @@ impl C6502 {
             status: Status::empty(),
             x: 0,
             y: 0,
-            mmap: MemoryMap::new(),
+            mmap: mmap,
             instr: &INSTRUCTIONS[idx],
             operand: 0,
             state: State::Running,
@@ -922,7 +894,7 @@ mod tests {
         let mut cpu = C6502::new_with_mode(AddrMode::imm);
         // -1 - 1
         cpu.acc = 255;
-        cpu.operand = 1;
+        cpu.mmap.write(0, 1); // Immediate mode reads operand from pc
         cpu.status.set(Status::CARRY, true);
         cpu.sbc();
         assert_eq!(cpu.acc, 254);
@@ -932,7 +904,7 @@ mod tests {
 
         // -1 - -1
         cpu.acc = 255;
-        cpu.operand = 255;
+        cpu.mmap.write(0, 255);
         cpu.status.set(Status::CARRY, true);
         cpu.sbc();
         assert_eq!(cpu.acc, 0);
@@ -943,7 +915,7 @@ mod tests {
 
         // -127 - 1
         cpu.acc = 128;
-        cpu.operand = 1;
+        cpu.mmap.write(0, 1);
         cpu.status.set(Status::CARRY, true);
         cpu.sbc();
         assert_eq!(cpu.acc, 127);
