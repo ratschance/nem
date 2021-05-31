@@ -137,7 +137,7 @@ impl MemoryMap {
 
     pub fn read16(&self, addr: u16) -> u16 {
         for (start, end, mem) in &self.items {
-            if addr >= *start && addr + 1 <= *end {
+            if addr >= *start && addr < *end {
                 return u16::from(mem.read(addr - start))
                     | (u16::from(mem.read(addr + 1 - start)) << 8);
             }
