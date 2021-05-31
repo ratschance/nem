@@ -103,8 +103,11 @@ impl C6502 {
         if self.remaining_cycles == 0 {
             let op = self.next_pc() as usize;
             let instr = &INSTRUCTIONS[op];
-            let (extra_addr_cyc, addr)  = (instr.addr_fn)(self);
-            let decoded = DecodedAddr { mode: &instr.addr_mode, addr: addr };
+            let (extra_addr_cyc, addr) = (instr.addr_fn)(self);
+            let decoded = DecodedAddr {
+                mode: &instr.addr_mode,
+                addr: addr,
+            };
             let extra_op_cyc = (instr.instr_fn)(self, &decoded);
             self.remaining_cycles += instr.cycles - 1 + (extra_addr_cyc && extra_op_cyc) as u8;
             //println!("{}", self);
@@ -144,7 +147,7 @@ impl C6502 {
                 }
             };
         }
-        [
+        let mut instructions = [
             op!(brk, imp, 7), op!(ora, izx, 6), op!(xxx, imp, 2), op!(xxx, imp, 8), op!(xxx, imp, 3), op!(ora, zp0, 3), op!(asl, zp0, 5), op!(xxx, imp, 5), op!(php, imp, 3), op!(ora, imm, 2), op!(asl, imp, 2), op!(xxx, imp, 2), op!(xxx, abs, 4), op!(ora, abs, 4), op!(asl, abs, 6), op!(xxx, imp, 6),
             op!(bpl, rel, 2), op!(ora, izy, 5), op!(xxx, imp, 2), op!(xxx, imp, 8), op!(xxx, imp, 4), op!(ora, zpx, 4), op!(asl, zpx, 6), op!(xxx, imp, 6), op!(clc, imp, 2), op!(ora, aby, 4), op!(xxx, imp, 2), op!(xxx, imp, 7), op!(xxx, imp, 4), op!(ora, abx, 4), op!(asl, abx, 7), op!(xxx, imp, 7),
             op!(jsr, abs, 6), op!(and, izx, 6), op!(xxx, imp, 2), op!(xxx, imp, 8), op!(bit, zp0, 3), op!(and, zp0, 3), op!(rol, zp0, 5), op!(xxx, imp, 5), op!(plp, imp, 4), op!(and, imm, 2), op!(rol, imp, 2), op!(xxx, imp, 2), op!(bit, abs, 4), op!(and, abs, 4), op!(rol, abs, 6), op!(xxx, imp, 6),
@@ -161,7 +164,13 @@ impl C6502 {
             op!(bne, rel, 2), op!(cmp, izy, 5), op!(xxx, imp, 2), op!(xxx, imp, 8), op!(xxx, imp, 4), op!(cmp, zpx, 4), op!(dec, zpx, 6), op!(xxx, imp, 6), op!(cld, imp, 2), op!(cmp, aby, 4), op!(xxx, imp, 2), op!(xxx, imp, 7), op!(xxx, imp, 4), op!(cmp, abx, 4), op!(dec, abx, 7), op!(xxx, imp, 7),
             op!(cpx, imm, 2), op!(sbc, izx, 6), op!(xxx, imp, 2), op!(xxx, imp, 8), op!(cpx, zp0, 3), op!(sbc, zp0, 3), op!(inc, zp0, 5), op!(xxx, imp, 5), op!(inx, imp, 2), op!(sbc, imm, 2), op!(nop, imp, 2), op!(xxx, imp, 2), op!(cpx, abs, 4), op!(sbc, abs, 4), op!(inc, abs, 6), op!(xxx, imp, 6),
             op!(beq, rel, 2), op!(sbc, izy, 5), op!(xxx, imp, 2), op!(xxx, imp, 8), op!(xxx, imp, 4), op!(sbc, zpx, 4), op!(inc, zpx, 6), op!(xxx, imp, 6), op!(sed, imp, 2), op!(sbc, aby, 4), op!(xxx, imp, 2), op!(xxx, imp, 7), op!(xxx, imp, 4), op!(sbc, abx, 4), op!(inc, abx, 7), op!(xxx, imp, 7),
-        ]
+        ];
+
+        instructions[0x0A] = Instruction { name: "ASL".to_string(), instr_fn: c6502_op_fns::C6502::asl_acc, addr_mode: AddrMode::imp, addr_fn: c6502_addr_fns::C6502::imp, cycles: 2};
+        instructions[0x2A] = Instruction { name: "ROL".to_string(), instr_fn: c6502_op_fns::C6502::rol_acc, addr_mode: AddrMode::imp, addr_fn: c6502_addr_fns::C6502::imp, cycles: 2};
+        instructions[0x4A] = Instruction { name: "LSR".to_string(), instr_fn: c6502_op_fns::C6502::lsr_acc, addr_mode: AddrMode::imp, addr_fn: c6502_addr_fns::C6502::imp, cycles: 2};
+        instructions[0x6A] = Instruction { name: "ROR".to_string(), instr_fn: c6502_op_fns::C6502::ror_acc, addr_mode: AddrMode::imp, addr_fn: c6502_addr_fns::C6502::imp, cycles: 2};
+        instructions
     }
 }
 
@@ -267,7 +276,7 @@ mod c6502_addr_fns {
 /// C6502 Opcode Implementations
 mod c6502_op_fns {
     pub(crate) use super::C6502;
-    use super::{AddrMode, DecodedAddr, State, Status, IRQ_VECTOR_ADDRESS, STACK_OFFSET};
+    use super::{DecodedAddr, State, Status, IRQ_VECTOR_ADDRESS, STACK_OFFSET};
 
     impl C6502 {
         fn set_zn(&mut self, val: u8) {
@@ -366,18 +375,21 @@ mod c6502_op_fns {
         /// ASL - Arithmetic Shift Left
         /// Shift acc or memory left one bit. Set carry to bit 7 of old val.
         pub fn asl(&mut self, decoded: &DecodedAddr) -> bool {
-            let (old_val, new_val) = if decoded.mode == &AddrMode::imp {
-                let old_val = self.acc;
-                let new_val = old_val << 1;
-                self.acc = new_val;
+            let old_val = self.mmap.read(decoded.addr);
+            let new_val = old_val << 1;
+            self.mmap.write(decoded.addr, new_val);
 
-                (old_val, new_val)
-            } else {
-                let old_val = self.mmap.read(decoded.addr);
-                let new_val = old_val << 1;
-                self.mmap.write(decoded.addr, new_val);
-                (old_val, new_val)
-            };
+            self.set_zn(new_val);
+            self.status.set(Status::CARRY, old_val & 0x80 == 0x80);
+            false
+        }
+
+        /// ASL ACC - [CUSTOM] ACC Mode Arithmetic Shift Left
+        pub fn asl_acc(&mut self, _decoded: &DecodedAddr) -> bool {
+            let old_val = self.acc;
+            let new_val = old_val << 1;
+            self.acc = new_val;
+
             self.set_zn(new_val);
             self.status.set(Status::CARRY, old_val & 0x80 == 0x80);
             false
@@ -601,18 +613,21 @@ mod c6502_op_fns {
         /// LSR - Logical Shift Right
         /// Shift either acc or memory right one bit. Set carry flag to contents of old bit 0
         pub fn lsr(&mut self, decoded: &DecodedAddr) -> bool {
-            let (old_val, new_val) = if decoded.mode == &AddrMode::imp {
-                let old_val = self.acc;
-                let new_val = old_val >> 1;
-                self.acc = new_val;
+            let old_val = self.mmap.read(decoded.addr);
+            let new_val = old_val >> 1;
+            self.mmap.write(decoded.addr, new_val);
 
-                (old_val, new_val)
-            } else {
-                let old_val = self.mmap.read(decoded.addr);
-                let new_val = old_val >> 1;
-                self.mmap.write(decoded.addr, new_val);
-                (old_val, new_val)
-            };
+            self.set_zn(new_val);
+            self.status.set(Status::CARRY, old_val & 0x1 == 0x1);
+            false
+        }
+
+        /// LSR ACC - [CUSTOM] ACC Mode Logical Shift Right
+        pub fn lsr_acc(&mut self, _decoded: &DecodedAddr) -> bool {
+            let old_val = self.acc;
+            let new_val = old_val >> 1;
+            self.acc = new_val;
+
             self.set_zn(new_val);
             self.status.set(Status::CARRY, old_val & 0x1 == 0x1);
             false
@@ -664,17 +679,21 @@ mod c6502_op_fns {
         /// ROL - Rotate Left
         /// Move each of the bits in either A or M one place to the left. Bit 0 is old C, Old bit 7 assigned to C
         pub fn rol(&mut self, decoded: &DecodedAddr) -> bool {
-            let (old_val, new_val) = if decoded.mode == &AddrMode::imp {
-                let old_val = self.acc;
-                let new_val = (old_val << 1) | self.status.contains(Status::CARRY) as u8;
-                self.acc = new_val;
-                (old_val, new_val)
-            } else {
-                let old_val = self.mmap.read(decoded.addr);
-                let new_val = (old_val << 1) | self.status.contains(Status::CARRY) as u8;
-                self.mmap.write(decoded.addr, new_val);
-                (old_val, new_val)
-            };
+            let old_val = self.mmap.read(decoded.addr);
+            let new_val = (old_val << 1) | self.status.contains(Status::CARRY) as u8;
+            self.mmap.write(decoded.addr, new_val);
+
+            self.set_zn(new_val);
+            self.status.set(Status::CARRY, old_val & 0x80 == 0x80);
+            false
+        }
+
+        /// ROL ACC - [CUSTOM] ACC Mode Rotate Left
+        pub fn rol_acc(&mut self, _decoded: &DecodedAddr) -> bool {
+            let old_val = self.acc;
+            let new_val = (old_val << 1) | self.status.contains(Status::CARRY) as u8;
+            self.acc = new_val;
+
             self.set_zn(new_val);
             self.status.set(Status::CARRY, old_val & 0x80 == 0x80);
             false
@@ -683,17 +702,21 @@ mod c6502_op_fns {
         /// ROR - Rotate Right
         /// Move each of the bits in either A or M one place to the right. Bit 7 is old C, Old bit 0 assigned to C
         pub fn ror(&mut self, decoded: &DecodedAddr) -> bool {
-            let (old_val, new_val) = if decoded.mode == &AddrMode::imp {
-                let old_val = self.acc;
-                let new_val = (old_val >> 1) | (self.status.contains(Status::CARRY) as u8) << 7;
-                self.acc = new_val;
-                (old_val, new_val)
-            } else {
-                let old_val = self.mmap.read(decoded.addr);
-                let new_val = (old_val >> 1) | (self.status.contains(Status::CARRY) as u8) << 7;
-                self.mmap.write(decoded.addr, new_val);
-                (old_val, new_val)
-            };
+            let old_val = self.mmap.read(decoded.addr);
+            let new_val = (old_val >> 1) | (self.status.contains(Status::CARRY) as u8) << 7;
+            self.mmap.write(decoded.addr, new_val);
+
+            self.set_zn(new_val);
+            self.status.set(Status::CARRY, old_val & 0x1 == 0x1);
+            false
+        }
+
+        /// ROR ACC - [CUSTOM] ACC Mode Rotate Right
+        pub fn ror_acc(&mut self, _decoded: &DecodedAddr) -> bool {
+            let old_val = self.acc;
+            let new_val = (old_val >> 1) | (self.status.contains(Status::CARRY) as u8) << 7;
+            self.acc = new_val;
+
             self.set_zn(new_val);
             self.status.set(Status::CARRY, old_val & 0x1 == 0x1);
             false
@@ -836,14 +859,11 @@ impl std::fmt::Display for Instruction {
 
 impl std::fmt::Display for C6502 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f,
-             "pc: #{:04x}, acc: #{:02x}, x: #{:02x}, y: #{:02x}, sp: #{:02x}, flags: {:?}", 
-             &self.pc,
-             &self.acc,
-             &self.x,
-             &self.y,
-             &self.sp,
-             &self.status)
+        write!(
+            f,
+            "pc: #{:04x}, acc: #{:02x}, x: #{:02x}, y: #{:02x}, sp: #{:02x}, flags: {:?}",
+            &self.pc, &self.acc, &self.x, &self.y, &self.sp, &self.status
+        )
     }
 }
 
@@ -887,7 +907,10 @@ mod tests {
             }
         }
 
-        let decoded = DecodedAddr { mode: &INSTRUCTIONS[idx].addr_mode, addr: 0 };
+        let decoded = DecodedAddr {
+            mode: &INSTRUCTIONS[idx].addr_mode,
+            addr: 0,
+        };
 
         // -1 - 1
         cpu.acc = 255;
