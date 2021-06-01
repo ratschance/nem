@@ -17,6 +17,7 @@ bitflags! {
     }
 }
 
+const NMI_VECTOR_ADDRESS: u16 = 0xFFFA;
 const RESET_VECTOR_ADDRESS: u16 = 0xFFFC;
 const IRQ_VECTOR_ADDRESS: u16 = 0xFFFE;
 const STACK_OFFSET: u16 = 0x100;
@@ -84,14 +85,35 @@ impl C6502 {
 
     pub fn reset(&mut self) {
         self.acc = 0;
+        // TODO: sp and status may not be accurate
         self.sp = 0xFF;
         self.status = Status::empty();
         self.x = 0;
         self.y = 0;
         self.state = State::Running;
-        self.remaining_cycles = 0;
+        self.remaining_cycles = 7;
 
         self.pc = self.mmap.read16(RESET_VECTOR_ADDRESS);
+    }
+
+    pub fn interrupt(&mut self, is_nmi: bool) {
+        if is_nmi || !self.status.contains(Status::IDISABLE) {
+            self.status.set(Status::BLO, false); // BLO clear for hardware interrupt
+            self.status.set(Status::BHI, true);
+            self.push_stack((self.pc >> 8) as u8);
+            self.push_stack(self.pc as u8);
+            self.push_stack(self.status.bits());
+            self.status.set(Status::IDISABLE, true);
+            self.pc = if is_nmi {
+                self.mmap.read16(NMI_VECTOR_ADDRESS)
+            } else {
+                self.mmap.read16(IRQ_VECTOR_ADDRESS)
+            };
+
+            // According to the Visual6502 site, an IRQ takes 7 cycles
+            // http://visual6502.org/wiki/index.php?title=6502_Timing_of_Interrupt_Handling
+            self.remaining_cycles = 7;
+        }
     }
 
     pub fn tick(&mut self) {
@@ -123,6 +145,16 @@ impl C6502 {
         let bytes = self.mmap.read16(self.pc);
         self.pc += 2;
         bytes
+    }
+
+    fn push_stack(&mut self, val: u8) {
+        self.mmap.write(STACK_OFFSET + u16::from(self.sp), val);
+        self.sp = self.sp.wrapping_sub(1);
+    }
+
+    fn pop_stack(&mut self) -> u8 {
+        self.sp = self.sp.wrapping_add(1);
+        self.mmap.read(STACK_OFFSET + u16::from(self.sp))
     }
 
     #[rustfmt::skip]
@@ -267,22 +299,12 @@ mod c6502_addr_fns {
 /// C6502 Opcode Implementations
 mod c6502_op_fns {
     pub(crate) use super::C6502;
-    use super::{State, Status, IRQ_VECTOR_ADDRESS, STACK_OFFSET};
+    use super::{State, Status, IRQ_VECTOR_ADDRESS};
 
     impl C6502 {
         fn set_zn(&mut self, val: u8) {
             self.status.set(Status::ZERO, val == 0);
             self.status.set(Status::NEGATIVE, (val & 0x80) != 0);
-        }
-
-        fn push_stack(&mut self, val: u8) {
-            self.mmap.write(STACK_OFFSET + u16::from(self.sp), val);
-            self.sp = self.sp.wrapping_sub(1);
-        }
-
-        fn pop_stack(&mut self) -> u8 {
-            self.sp = self.sp.wrapping_add(1);
-            self.mmap.read(STACK_OFFSET + u16::from(self.sp))
         }
 
         /// Implementation of the add routine extracted so it can be used by the ADC and SBC
@@ -437,8 +459,7 @@ mod c6502_op_fns {
             self.push_stack(self.pc as u8);
             self.push_stack(status.bits());
             self.status.set(Status::IDISABLE, true);
-            self.pc = u16::from(self.mmap.read(IRQ_VECTOR_ADDRESS + 1)) << 8
-                | u16::from(self.mmap.read(IRQ_VECTOR_ADDRESS));
+            self.pc = self.mmap.read16(IRQ_VECTOR_ADDRESS);
             false
         }
 
