@@ -943,6 +943,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Expensive test, ignore unless explicitly requested
     fn can_run_opcode_test() {
         use crate::memory::Ram;
         use std::fs::File;
