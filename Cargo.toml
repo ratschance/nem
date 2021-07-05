@@ -1,5 +1,5 @@
 [package]
-name = "nes"
+name = "nem"
 version = "0.1.0"
 authors = ["Conrad Ratschan <conrad.ratschan@gmail.com>"]
 edition = "2018"
@@ -10,3 +10,8 @@ edition = "2018"
 bitflags = "1.2.1"
 lazy_static = "1.4.0"
 thiserror = "1.0"
+
+[dependencies.sdl2]
+version = "0.34"
+#default-features = false
+#features = ["gfx", "image", "mixer", "ttf"]
