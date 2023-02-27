@@ -1,3 +1,5 @@
+use tracing::info;
+
 pub trait Memory {
     /// Read one byte at the specified address
     ///
@@ -113,7 +115,7 @@ pub struct MemoryMap {
 
 impl std::fmt::Debug for dyn Memory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Memory",)
+        write!(f, "{}", self.name())
     }
 }
 
@@ -122,7 +124,11 @@ impl MemoryMap {
         MemoryMap { items: Vec::new() }
     }
 
+    /// Register a partition of the memory map.
+    /// Bounds are inclusive.
+    #[tracing::instrument]
     pub fn register(&mut self, start: u16, end: u16, mem: Box<dyn Memory>) {
+        info!("[#{:04x}, #{:02x}]", start, end);
         self.items.push((start, end, mem))
     }
 
@@ -153,5 +159,27 @@ impl MemoryMap {
             }
         }
         panic!("Attempted to write to address outside of mmap: {}", addr)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{MemoryMap, Ram};
+
+    #[test]
+    fn test_bounds() {
+        let mut mmap = MemoryMap::new();
+        mmap.register(0x0, 0xFF, Box::new(Ram::new(0x100)));
+        mmap.register(0x100, 0x1FF, Box::new(Ram::new(0x100)));
+
+        mmap.write(0x0, 1);
+        mmap.write(0xFF, 2);
+        mmap.write(0x100, 3);
+        mmap.write(0x1FF, 4);
+
+        assert_eq!(mmap.read(0x0), 1);
+        assert_eq!(mmap.read(0xFF), 2);
+        assert_eq!(mmap.read(0x100), 3);
+        assert_eq!(mmap.read(0x1FF), 4);
     }
 }

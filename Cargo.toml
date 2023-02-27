@@ -2,7 +2,7 @@
 name = "nem"
 version = "0.1.0"
 authors = ["Conrad Ratschan <ratschance@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,5 +11,5 @@ bitflags = "1.2.1"
 lazy_static = "1.4.0"
 thiserror = "1.0"
 sdl2 = "0.34"
-#default-features = false
-#features = ["gfx", "image", "mixer", "ttf"]
+tracing = "0.1.37"
+tracing-subscriber = "0.3.16"

@@ -20,13 +20,12 @@ pub enum NesCartError {
 /// program and character rom.
 #[derive(Debug, PartialEq)]
 pub struct Cartridge {
-    info: NesInfo,
-    prg_rom: Vec<u8>,
-    chr_rom: Vec<u8>,
+    pub info: NesInfo,
+    pub prg_rom: Vec<u8>,
+    pub chr_rom: Vec<u8>,
 }
 
 impl Cartridge {
-
     /// Parses an iNES 1.0 ROM file at the specified path and returns a Result with a Cartridge if successful.
     pub fn new(path: &str) -> Result<Self, NesCartError> {
         use std::fs::File;
@@ -61,7 +60,7 @@ impl Cartridge {
 
 /// Mirroring modes supported on the NES
 #[derive(Debug, PartialEq)]
-enum Mirroring {
+pub enum Mirroring {
     Horizontal,
     Vertical,
     FourScreen,
@@ -71,16 +70,15 @@ enum Mirroring {
 /// in practice.
 #[derive(Debug, PartialEq)]
 pub struct NesInfo {
-    prg_rom_size: usize,
-    chr_rom_size: usize,
-    mapper: u16,
-    mirroring: Mirroring,
-    has_trainer: bool,
-    has_nvmem: bool,
+    pub prg_rom_size: usize,
+    pub chr_rom_size: usize,
+    pub mapper: u16,
+    pub mirroring: Mirroring,
+    pub has_trainer: bool,
+    pub has_nvmem: bool,
 }
 
 impl NesInfo {
-
     /// Takes the raw bytes of a iNES 1.0 ROM, parses up to flags7 and returns a Result with a NesInfo on success.
     /// Currently only supports iNES 1.0, and the base NES console.
     pub fn from_header(bytes: &[u8]) -> Result<Self, NesCartError> {

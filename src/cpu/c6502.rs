@@ -1,3 +1,5 @@
+use tracing::{debug, info};
+
 use crate::memory::MemoryMap;
 
 lazy_static! {
@@ -30,7 +32,7 @@ pub struct C6502 {
     status: Status,
     x: u8,
     y: u8,
-    mmap: MemoryMap,
+    pub mmap: MemoryMap,
     state: State,
     remaining_cycles: u8,
 }
@@ -94,6 +96,12 @@ impl C6502 {
         self.remaining_cycles = 7;
 
         self.pc = self.mmap.read16(RESET_VECTOR_ADDRESS);
+        info!(self.pc)
+    }
+
+    pub fn set_reset(&mut self, addr: u16) {
+        self.mmap.write(RESET_VECTOR_ADDRESS, (addr & 0xFF) as u8);
+        self.mmap.write(RESET_VECTOR_ADDRESS + 1, (addr >> 8) as u8);
     }
 
     pub fn interrupt(&mut self, is_nmi: bool) {
@@ -118,12 +126,13 @@ impl C6502 {
 
     pub fn tick(&mut self) {
         if self.remaining_cycles == 0 {
+            debug!("{}", self);
             let op = self.next_pc() as usize;
             let instr = &INSTRUCTIONS[op];
             let (extra_addr_cyc, addr) = (instr.addr_fn)(self);
             let extra_op_cyc = (instr.instr_fn)(self, addr);
             self.remaining_cycles += instr.cycles - 1 + (extra_addr_cyc && extra_op_cyc) as u8;
-            //println!("{}", self);
+            debug!(op, ?instr);
         } else {
             self.remaining_cycles -= 1;
         }
@@ -957,12 +966,10 @@ mod tests {
         rom.read_to_end(&mut bs)
             .expect("Unable to read cartridge into memory");
 
-        bs[RESET_VECTOR_ADDRESS as usize] = 0x00;
-        bs[(RESET_VECTOR_ADDRESS + 1) as usize] = 0x04;
-
         let mut cpu_mmap = MemoryMap::new();
         cpu_mmap.register(0x0, 0xFFFF, Box::new(Ram::new_with_bs(&bs)));
         let mut cpu = C6502::new(cpu_mmap);
+        cpu.set_reset(0x400);
         cpu.reset();
 
         loop {
