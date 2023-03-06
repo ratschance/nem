@@ -99,11 +99,6 @@ impl C6502 {
         info!(self.pc)
     }
 
-    pub fn set_reset(&mut self, addr: u16) {
-        self.mmap.write(RESET_VECTOR_ADDRESS, (addr & 0xFF) as u8);
-        self.mmap.write(RESET_VECTOR_ADDRESS + 1, (addr >> 8) as u8);
-    }
-
     pub fn interrupt(&mut self, is_nmi: bool) {
         if is_nmi || !self.status.contains(Status::IDISABLE) {
             self.status.set(Status::BLO, false); // BLO clear for hardware interrupt
@@ -541,7 +536,7 @@ mod c6502_op_fns {
         /// DEX - Decrement X Register
         /// Subtract one from x. Set ZN as appropriate
         pub fn dex(&mut self, _addr: u16) -> bool {
-            self.x = self.x.wrapping_sub(1) as u8;
+            self.x = self.x.wrapping_sub(1);
             self.set_zn(self.x);
             false
         }
@@ -907,6 +902,11 @@ impl C6502 {
             state: State::Running,
             remaining_cycles: 0,
         }
+    }
+
+    pub fn set_reset(&mut self, addr: u16) {
+        self.mmap.write(RESET_VECTOR_ADDRESS, (addr & 0xFF) as u8);
+        self.mmap.write(RESET_VECTOR_ADDRESS + 1, (addr >> 8) as u8);
     }
 }
 

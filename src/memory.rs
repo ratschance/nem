@@ -33,7 +33,11 @@ impl Ram {
             backing_store: vec![0; size],
         }
     }
+}
 
+#[cfg(test)]
+impl Ram {
+    // The test ROM needs to be writable, so treat it as RAM with a backing store
     pub fn new_with_bs(data: &[u8]) -> Self {
         Ram {
             backing_store: data.to_owned(),
