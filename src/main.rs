@@ -8,6 +8,7 @@ mod controller;
 mod cpu;
 mod mapper;
 mod memory;
+mod n2c02;
 mod nes;
 
 use sdl2::pixels::PixelFormatEnum;
